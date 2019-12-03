@@ -6,14 +6,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define array_ptr(T) struct {size_t len; (T) *data;}
+
+#define range(i, max) for (size_t (i) = 0; (i) < (max); ++(i))
+
 struct Graphics {
 	GLFWwindow *window;
 	VkInstance instance;
+
+	VkPhysicalDevice dev_p;
+	VkDevice dev;
+	VkQueue gq;
 };
-
-#define array_ptr(T) struct {size_t len; (T) *data;}
-
-
 
 int main() {
 
@@ -78,9 +82,9 @@ int main() {
 
 			vkEnumerateInstanceLayerProperties(&layerCount, layers);
 
-			for (int i = 0; i < VALIDATION_LAYERS_LEN; i++) {
+			range (i, VALIDATION_LAYERS_LEN) {
 				bool layerFound = false;
-				for (int j = 0; j < layerCount; j++) {
+				range (j, layerCount) {
 					if (strcmp(validationLayers[i], layers[j].layerName) == 0) {
 						layerFound = true;
 						break;
@@ -104,6 +108,86 @@ int main() {
 		}
 	}
 
+	// get physical/logical device
+	{
+		uint32_t deviceCount = 0;
+		vkEnumeratePhysicalDevices(g.instance, &deviceCount, NULL);
+
+		if (!deviceCount) {
+			printf("no devices with vulkan support\n");
+			exit(1);
+		}
+
+		VkPhysicalDevice devices[deviceCount];
+		vkEnumeratePhysicalDevices(g.instance, &deviceCount, devices);
+
+		g.dev_p = VK_NULL_HANDLE;
+
+#define QF_GRAPHICS 0
+#define QF_LEN 1
+		struct {
+			uint64_t flags; 
+			uint64_t indices[QF_LEN];
+		} qf;
+		const uint64_t QF_COMPLETE = ((1 << QF_LEN) - 1);
+
+		range (i, deviceCount) {
+			g.dev_p = devices[i];
+			// check queue families
+			uint32_t qf_count = 0;
+			vkGetPhysicalDeviceQueueFamilyProperties(g.dev_p, &qf_count, NULL);
+
+			VkQueueFamilyProperties qfs[qf_count];
+			vkGetPhysicalDeviceQueueFamilyProperties(g.dev_p, &qf_count, qfs);
+			qf.flags = 0;
+			range (j, qf_count) {
+				if (qfs[j].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+					qf.flags |= 1 << QF_GRAPHICS;
+					qf.indices[QF_GRAPHICS] = j;
+				}
+			}
+
+			if (qf.flags != QF_COMPLETE) {
+				continue;
+			}
+
+			// all checks succeeded so stop looking
+			break;
+		}
+
+		if (g.dev_p == VK_NULL_HANDLE) {
+			printf("no suitable devices");
+		}
+
+		VkDeviceQueueCreateInfo queueCreateInfo = {};
+		queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+		queueCreateInfo.queueFamilyIndex = qf.indices[QF_GRAPHICS];
+		queueCreateInfo.queueCount = 1;
+		float queuePriority = 1.0f;
+
+		queueCreateInfo.pQueuePriorities = &queuePriority;
+		VkPhysicalDeviceFeatures deviceFeatures = {};
+
+		VkDeviceCreateInfo createInfo = {};
+		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+		createInfo.queueCreateInfoCount = 1;
+		createInfo.pQueueCreateInfos = &queueCreateInfo;
+		createInfo.pEnabledFeatures = &deviceFeatures;
+		createInfo.enabledExtensionCount = 0;
+		if (enableValidationLayers) {
+			createInfo.enabledLayerCount = VALIDATION_LAYERS_LEN;
+			createInfo.ppEnabledLayerNames = validationLayers;
+		} else {
+			createInfo.enabledLayerCount = 0;
+		}
+
+		if (vkCreateDevice(g.dev_p, &createInfo, NULL, &g.dev) != VK_SUCCESS) {
+			printf("failed to create logical device!\n");
+		}
+
+		vkGetDeviceQueue(g.dev, qf.indices[QF_GRAPHICS], 0, &g.gq);
+	}
+
 	////////////////
 	// Event Loop
 
@@ -111,8 +195,10 @@ int main() {
 		glfwPollEvents();
 	}
 
-	////////////////////////
-	// Window Destruction
+	//////////////////////
+	// graphics cleanup
+
+	vkDestroyDevice(g.dev, NULL);
 
 	vkDestroyInstance(g.instance, NULL);
 
