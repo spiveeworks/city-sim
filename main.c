@@ -33,8 +33,51 @@ struct Graphics {
 	VkSwapchainKHR swapchain;
 	uint32_t swapchainImageCount;
 	VkImage swapchainImages[STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT];
+
+	VkRenderPass renderPass;
+	VkPipelineLayout pipelineLayout;
+	VkPipeline graphicsPipeline;
+
 	VkImageView swapchainImageViews[STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT];
+	VkFramebuffer swapchainFramebuffers[STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT];
+	VkCommandPool commandPool;
+	VkCommandBuffer commandBuffers[STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT];
+
+	VkSemaphore imageAvailableSemaphore;
+	VkSemaphore renderFinishedSemaphore;
 };
+
+VkShaderModule createShaderModule(VkDevice dev, char* filename) {
+	size_t size = 0;
+	FILE *f = fopen(filename, "reb");
+	if (f == NULL) 
+	{ 
+		printf("Failed to open shader file: %s\n", filename);
+		exit(1);
+	} 
+	fseek(f, 0, SEEK_END);
+	size = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	uint32_t buffer[size / sizeof(uint32_t) + 1];
+	if (size != fread(buffer, sizeof(char), size, f))
+	{
+		printf("Failed to read shader file: %s\n", filename);
+		exit(1);
+	}
+	fclose(f);
+
+	VkShaderModuleCreateInfo createInfo = {};
+	createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+	createInfo.codeSize = size;
+	createInfo.pCode = buffer;
+
+	VkShaderModule result;
+	if (vkCreateShaderModule(dev, &createInfo, NULL, &result) != VK_SUCCESS) {
+		printf("failed to create shader module from file: %s\n", filename);
+		exit(1);
+	}
+	return result;
+}
 
 int main() {
 	///////////////
@@ -393,8 +436,198 @@ int main() {
 				g.swapchainImages);
 	}
 
-	// create image views
+	// create graphics pipeline
 	{
+		//shader stages
+		VkShaderModule vert = createShaderModule(g.dev, "vert.spv");
+		VkShaderModule frag = createShaderModule(g.dev, "frag.spv");
+
+		VkPipelineShaderStageCreateInfo vertStageInfo = {};
+		vertStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		vertStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+		vertStageInfo.module = vert;
+		vertStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo fragStageInfo = {};
+		fragStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		fragStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+		fragStageInfo.module = frag;
+		fragStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo shaderStages[2] =
+			{vertStageInfo, fragStageInfo};
+
+		// fixed function stages
+		VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
+		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+		vertexInputInfo.vertexBindingDescriptionCount = 0;
+		vertexInputInfo.vertexAttributeDescriptionCount = 0;
+
+		VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
+		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+		inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+		VkViewport viewport = {};
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.width = (float) g.swapchainExtent.width;
+		viewport.height = (float) g.swapchainExtent.height;
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+
+		VkRect2D scissor = {{0, 0}, g.swapchainExtent};
+
+		VkPipelineViewportStateCreateInfo viewportState = {};
+		viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+		viewportState.viewportCount = 1;
+		viewportState.pViewports = &viewport;
+		viewportState.scissorCount = 1;
+		viewportState.pScissors = &scissor;
+
+		VkPipelineRasterizationStateCreateInfo rasterizer = {};
+		rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+		rasterizer.depthClampEnable = VK_FALSE;
+		rasterizer.rasterizerDiscardEnable = VK_FALSE;
+		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+		rasterizer.lineWidth = 1.0f;
+		rasterizer.depthBiasEnable = VK_FALSE;
+
+		VkPipelineMultisampleStateCreateInfo multisampling = {};
+		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+		multisampling.sampleShadingEnable = VK_FALSE;
+		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+		VkPipelineColorBlendAttachmentState colorBlendAttachment = {};
+		colorBlendAttachment.colorWriteMask =
+				VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+				VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+		colorBlendAttachment.blendEnable = VK_FALSE;
+
+		VkPipelineColorBlendStateCreateInfo colorBlending = {};
+		colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+		colorBlending.logicOpEnable = VK_FALSE;
+		colorBlending.attachmentCount = 1;
+		colorBlending.pAttachments = &colorBlendAttachment;
+
+		VkDynamicState dynamicStates[2] = {
+			VK_DYNAMIC_STATE_VIEWPORT,
+			VK_DYNAMIC_STATE_LINE_WIDTH // really?
+		};
+		VkPipelineDynamicStateCreateInfo dynamicState = {};
+		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+		dynamicState.dynamicStateCount = 2;
+		dynamicState.pDynamicStates = dynamicStates;
+
+		// layout
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
+		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+		if (vkCreatePipelineLayout(g.dev, &pipelineLayoutInfo, NULL, &g.pipelineLayout) != VK_SUCCESS) {
+			printf("failed to create pipeline layout!\n");
+			exit(1);
+		}
+
+		// render pass
+		VkAttachmentDescription colorAttachment = {};
+		colorAttachment.format = g.swapchainImageFormat;
+		colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+		VkAttachmentReference colorAttachmentRef = {};
+		colorAttachmentRef.attachment = 0;
+		colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+		VkSubpassDescription subpass = {};
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpass.colorAttachmentCount = 1;
+		subpass.pColorAttachments = &colorAttachmentRef;
+
+		VkSubpassDependency dependency = {};
+		dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+		dependency.dstSubpass = 0;
+		dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.srcAccessMask = 0;
+		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+		VkRenderPassCreateInfo renderPassInfo = {};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+		renderPassInfo.attachmentCount = 1;
+		renderPassInfo.pAttachments = &colorAttachment;
+		renderPassInfo.subpassCount = 1;
+		renderPassInfo.pSubpasses = &subpass;
+		renderPassInfo.dependencyCount = 1;
+		renderPassInfo.pDependencies = &dependency;
+
+
+		if (vkCreateRenderPass(g.dev, &renderPassInfo, NULL, &g.renderPass)
+				!= VK_SUCCESS)
+		{
+			printf("failed to create render pass!\n");
+		}
+
+		// pipeline
+		VkGraphicsPipelineCreateInfo pipelineInfo = {};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		pipelineInfo.stageCount = 2;
+		pipelineInfo.pStages = shaderStages;
+		pipelineInfo.pVertexInputState = &vertexInputInfo;
+		pipelineInfo.pInputAssemblyState = &inputAssembly;
+		pipelineInfo.pViewportState = &viewportState;
+		pipelineInfo.pRasterizationState = &rasterizer;
+		pipelineInfo.pMultisampleState = &multisampling;
+		pipelineInfo.pDepthStencilState = NULL;
+		pipelineInfo.pColorBlendState = &colorBlending;
+		pipelineInfo.pDynamicState = NULL;
+		pipelineInfo.layout = g.pipelineLayout;
+		pipelineInfo.renderPass = g.renderPass;
+		pipelineInfo.subpass = 0;
+		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+		pipelineInfo.basePipelineIndex = -1;
+
+		if (vkCreateGraphicsPipelines(g.dev, VK_NULL_HANDLE, 1, &pipelineInfo,
+				NULL, &g.graphicsPipeline) != VK_SUCCESS)
+		{
+			printf("failed to create graphics pipeline!\n");
+		}
+
+		vkDestroyShaderModule(g.dev, vert, NULL);
+		vkDestroyShaderModule(g.dev, frag, NULL);
+	}
+
+	// create command pool
+	{
+		VkCommandPoolCreateInfo poolInfo = {};
+		poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+		poolInfo.queueFamilyIndex = g.qfi[QF_GRAPHICS];
+		poolInfo.flags = 0;
+
+		if (vkCreateCommandPool(g.dev, &poolInfo, NULL, &g.commandPool) != VK_SUCCESS) {
+			printf("failed to create command pool!");
+		}
+
+		VkCommandBufferAllocateInfo allocInfo = {};
+		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		allocInfo.commandPool = g.commandPool;
+		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		allocInfo.commandBufferCount = (uint32_t) g.swapchainImageCount;
+
+		if (vkAllocateCommandBuffers(g.dev, &allocInfo, g.commandBuffers) != VK_SUCCESS) {
+			printf("failed to allocate command buffers!");
+			exit(1);
+		}
+	}
+
+	// create views, framebuffers, commandbuffers
+	range (i, g.swapchainImageCount) {
+		// image view
 		VkImageViewCreateInfo createInfo = {};
 		createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 
@@ -411,14 +644,79 @@ int main() {
 		createInfo.subresourceRange.levelCount = 1;
 		createInfo.subresourceRange.baseArrayLayer = 0;
 		createInfo.subresourceRange.layerCount = 1;
-		range (i, g.swapchainImageCount) {
-			createInfo.image = g.swapchainImages[i];
+		createInfo.image = g.swapchainImages[i];
 
-			if (vkCreateImageView(g.dev, &createInfo, NULL,
-					&g.swapchainImageViews[i]) != VK_SUCCESS)
-			{
-				printf("failed to create image views!\n");
-			}
+		if (vkCreateImageView(g.dev, &createInfo, NULL,
+				&g.swapchainImageViews[i]) != VK_SUCCESS)
+		{
+			printf("failed to create image view!\n");
+		}
+
+		// framebuffer
+		VkImageView attachments[] = {
+			g.swapchainImageViews[i]
+		};
+
+		VkFramebufferCreateInfo framebufferInfo = {};
+		framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+		framebufferInfo.renderPass = g.renderPass;
+		framebufferInfo.width = g.swapchainExtent.width;
+		framebufferInfo.height = g.swapchainExtent.height;
+		framebufferInfo.layers = 1;
+		framebufferInfo.attachmentCount = 1;
+		framebufferInfo.pAttachments = attachments;
+
+		if (vkCreateFramebuffer(g.dev, &framebufferInfo, NULL,
+				&g.swapchainFramebuffers[i]) != VK_SUCCESS)
+		{
+			printf("failed to create framebuffer!\n");
+			exit(1);
+		}
+
+		// command buffer
+		VkCommandBufferBeginInfo beginInfo = {};
+		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		beginInfo.flags = 0;
+		beginInfo.pInheritanceInfo = NULL;
+
+		if (vkBeginCommandBuffer(g.commandBuffers[i], &beginInfo) != VK_SUCCESS) {
+			printf("failed to begin recording command buffer!\n");
+			exit(1);
+		}
+
+		VkRenderPassBeginInfo renderPassInfo = {};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		renderPassInfo.renderPass = g.renderPass;
+		renderPassInfo.framebuffer = g.swapchainFramebuffers[i];
+
+		renderPassInfo.renderArea.offset = (VkOffset2D) {0, 0};
+		renderPassInfo.renderArea.extent = g.swapchainExtent;
+
+		VkClearValue clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
+		renderPassInfo.clearValueCount = 1;
+		renderPassInfo.pClearValues = &clearColor;
+
+		vkCmdBeginRenderPass(g.commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+		vkCmdBindPipeline(g.commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, g.graphicsPipeline);
+		vkCmdDraw(g.commandBuffers[i], 3, 1, 0, 0);
+		vkCmdEndRenderPass(g.commandBuffers[i]);
+
+		if (vkEndCommandBuffer(g.commandBuffers[i]) != VK_SUCCESS) {
+			printf("failed to record command buffer!\n");
+			exit(1);
+		}
+	}
+
+	// create semaphores
+	{
+		VkSemaphoreCreateInfo semaphoreInfo = {};
+		semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+		if (vkCreateSemaphore(g.dev, &semaphoreInfo, NULL,
+				&g.imageAvailableSemaphore) != VK_SUCCESS ||
+			vkCreateSemaphore(g.dev, &semaphoreInfo, NULL,
+				&g.renderFinishedSemaphore) != VK_SUCCESS)
+		{
+			printf("failed to create semaphores!\n");
 		}
 	}
 
@@ -427,14 +725,70 @@ int main() {
 
 	while(!glfwWindowShouldClose(g.window)) {
 		glfwPollEvents();
+
+		// let previous frame finish
+		vkQueueWaitIdle(g.pq);
+
+		// draw frame
+		uint32_t imageIndex;
+		vkAcquireNextImageKHR(g.dev, g.swapchain, UINT64_MAX,
+				g.imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+
+		VkSubmitInfo submitInfo = {};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+		VkSemaphore waitSemaphores[] = {g.imageAvailableSemaphore};
+		VkPipelineStageFlags waitStages[] =
+			{VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+		submitInfo.waitSemaphoreCount = 1;
+		submitInfo.pWaitSemaphores = waitSemaphores;
+		submitInfo.pWaitDstStageMask = waitStages;
+
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &g.commandBuffers[imageIndex];
+
+		VkSemaphore signalSemaphores[] = {g.renderFinishedSemaphore};
+		submitInfo.signalSemaphoreCount = 1;
+		submitInfo.pSignalSemaphores = signalSemaphores;
+
+		if (vkQueueSubmit(g.gq, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+			printf("failed to submit draw command buffer!\n");
+			exit(1);
+		}
+
+		VkPresentInfoKHR presentInfo = {};
+		presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+
+		presentInfo.waitSemaphoreCount = 1;
+		presentInfo.pWaitSemaphores = signalSemaphores;
+
+		VkSwapchainKHR swapchains[] = {g.swapchain};
+		presentInfo.swapchainCount = 1;
+		presentInfo.pSwapchains = swapchains;
+		presentInfo.pImageIndices = &imageIndex;
+		presentInfo.pResults = NULL;
+
+		vkQueuePresentKHR(g.pq, &presentInfo);
 	}
+
+    vkDeviceWaitIdle(g.dev);
 
 	//////////////////////
 	// graphics cleanup
 
+	vkDestroySemaphore(g.dev, g.renderFinishedSemaphore, NULL);
+	vkDestroySemaphore(g.dev, g.imageAvailableSemaphore, NULL);
+
+	vkDestroyCommandPool(g.dev, g.commandPool, NULL);
+
 	range (i, g.swapchainImageCount) {
+		vkDestroyFramebuffer(g.dev, g.swapchainFramebuffers[i], NULL);
 		vkDestroyImageView(g.dev, g.swapchainImageViews[i], NULL);
 	}
+
+	vkDestroyPipeline(g.dev, g.graphicsPipeline, NULL);
+	vkDestroyPipelineLayout(g.dev, g.pipelineLayout, NULL);
+	vkDestroyRenderPass(g.dev, g.renderPass, NULL);
 
 	vkDestroySwapchainKHR(g.dev, g.swapchain, NULL);
 	vkDestroyDevice(g.dev, NULL);
