@@ -11,7 +11,7 @@
 
 #define STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT 8
 
-struct Graphics {
+struct GraphicsInstance {
 	GLFWwindow *window;
 	VkInstance instance;
 
@@ -22,7 +22,9 @@ struct Graphics {
 
 	uint32_t qfi[QF_LEN];
 	VkQueue gq, pq;
+};
 
+struct Graphics {
 	VkFormat swapchainImageFormat;
 	VkExtent2D swapchainExtent;
 	VkSwapchainKHR swapchain;
@@ -74,12 +76,12 @@ VkShaderModule createShaderModule(VkDevice dev, char* filename) {
 	return result;
 }
 
-struct Graphics createGraphics() {
+struct GraphicsInstance createGraphicsInstance() {
 	///////////////
 	// Constants
 
-	const int WIDTH = 800;
-	const int HEIGHT = 600;
+	const int DEFAULT_WIDTH = 800;
+	const int DEFAULT_HEIGHT = 600;
 
 #ifdef NDEBUG
 	size_t VALIDATION_LAYERS_LEN = 0;
@@ -95,7 +97,7 @@ struct Graphics createGraphics() {
 	const char* required_exts[REQUIRED_EXT_COUNT];
 	required_exts[0] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
 
-	struct Graphics g;
+	struct GraphicsInstance g;
 
 	///////////////////////////
 	// Window Initialisation
@@ -104,7 +106,8 @@ struct Graphics createGraphics() {
 
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-	g.window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan window", NULL, NULL);
+	g.window = glfwCreateWindow(DEFAULT_WIDTH, DEFAULT_HEIGHT, "Vulkan window",
+			NULL, NULL);
 
 	///////////////////////////
 	// Vulkan Initialisation
@@ -308,22 +311,28 @@ struct Graphics createGraphics() {
 		vkGetDeviceQueue(g.dev, g.qfi[QF_PRESENTATION], 0, &g.pq);
 	}
 
+	return g;
+}
+
+struct Graphics createGraphics(struct GraphicsInstance *gi) {
+	struct Graphics g;
+
 	// create swapchain
 	{
 		VkSurfaceCapabilitiesKHR capabilities;
-		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g.dev_p, g.surface,
+		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gi->dev_p, gi->surface,
 				&capabilities);
 
 		VkSwapchainCreateInfoKHR createInfo = {};
 		createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-		createInfo.surface = g.surface;
+		createInfo.surface = gi->surface;
 
 		// image stuff
 		{
 			uint32_t formatCount;
-			vkGetPhysicalDeviceSurfaceFormatsKHR(g.dev_p, g.surface, &formatCount, NULL);
+			vkGetPhysicalDeviceSurfaceFormatsKHR(gi->dev_p, gi->surface, &formatCount, NULL);
 			VkSurfaceFormatKHR formats[formatCount];
-			vkGetPhysicalDeviceSurfaceFormatsKHR(g.dev_p, g.surface, &formatCount, formats);
+			vkGetPhysicalDeviceSurfaceFormatsKHR(gi->dev_p, gi->surface, &formatCount, formats);
 			size_t format = 0;
 			range (i, formatCount) {
 				if (
@@ -341,20 +350,24 @@ struct Graphics createGraphics() {
 		if (capabilities.currentExtent.width != UINT32_MAX) {
 			createInfo.imageExtent = capabilities.currentExtent;
 		} else {
-			if (WIDTH < capabilities.minImageExtent.width) {
+			unsigned width;
+			unsigned height;
+			glfwGetFramebufferSize(gi->window, (int*)&width, (int*)&height);
+
+			if (width < capabilities.minImageExtent.width) {
 				createInfo.imageExtent.width = capabilities.minImageExtent.width;
-			} else if (WIDTH > capabilities.maxImageExtent.width) {
+			} else if (width > capabilities.maxImageExtent.width) {
 				createInfo.imageExtent.width = capabilities.maxImageExtent.width;
 			} else {
-				createInfo.imageExtent.width = WIDTH;
+				createInfo.imageExtent.width = width;
 			}
 
-			if (HEIGHT < capabilities.minImageExtent.height) {
+			if (height < capabilities.minImageExtent.height) {
 				createInfo.imageExtent.height = capabilities.minImageExtent.height;
-			} else if (HEIGHT > capabilities.maxImageExtent.height) {
+			} else if (height > capabilities.maxImageExtent.height) {
 				createInfo.imageExtent.height = capabilities.maxImageExtent.height;
 			} else {
-				createInfo.imageExtent.height = HEIGHT;
+				createInfo.imageExtent.height = height;
 			}
 		}
 		g.swapchainExtent = createInfo.imageExtent;
@@ -369,9 +382,9 @@ struct Graphics createGraphics() {
 		// queuefamily stuff
 		{
 			bool unique = true;
-			uint32_t x = g.qfi[0];
+			uint32_t x = gi->qfi[0];
 			range(i, QF_LEN) {
-				if (g.qfi[i] != x) {
+				if (gi->qfi[i] != x) {
 					unique = false;
 					break;
 				}
@@ -386,7 +399,7 @@ struct Graphics createGraphics() {
 			} else {
 				createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
 				createInfo.queueFamilyIndexCount = 2;
-				createInfo.pQueueFamilyIndices = g.qfi;
+				createInfo.pQueueFamilyIndices = gi->qfi;
 			}
 		}
 
@@ -397,10 +410,10 @@ struct Graphics createGraphics() {
 		createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
 		{
 			uint32_t presentModesCount;
-			vkGetPhysicalDeviceSurfacePresentModesKHR(g.dev_p, g.surface,
+			vkGetPhysicalDeviceSurfacePresentModesKHR(gi->dev_p, gi->surface,
 					&presentModesCount, NULL);
 			VkPresentModeKHR presentModes[presentModesCount];
-			vkGetPhysicalDeviceSurfacePresentModesKHR(g.dev_p, g.surface,
+			vkGetPhysicalDeviceSurfacePresentModesKHR(gi->dev_p, gi->surface,
 					&presentModesCount, presentModes);
 
 			range (i, presentModesCount) {
@@ -412,14 +425,14 @@ struct Graphics createGraphics() {
 
 		createInfo.oldSwapchain = VK_NULL_HANDLE;
 
-		if (vkCreateSwapchainKHR(g.dev, &createInfo, NULL, &g.swapchain) != VK_SUCCESS) {
+		if (vkCreateSwapchainKHR(gi->dev, &createInfo, NULL, &g.swapchain) != VK_SUCCESS) {
 			printf("failed to create swap chain!\n");
 		}
 
 		// we could combine these vulkan calls, but the validation layer gets
 		// confused :)
 		g.swapchainImageCount = 0;
-		vkGetSwapchainImagesKHR(g.dev, g.swapchain, &g.swapchainImageCount,
+		vkGetSwapchainImagesKHR(gi->dev, g.swapchain, &g.swapchainImageCount,
 				NULL);
 		if (g.swapchainImageCount > STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT)
 		{
@@ -427,15 +440,15 @@ struct Graphics createGraphics() {
 					STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT);
 			exit(1);
 		}
-		vkGetSwapchainImagesKHR(g.dev, g.swapchain, &g.swapchainImageCount,
+		vkGetSwapchainImagesKHR(gi->dev, g.swapchain, &g.swapchainImageCount,
 				g.swapchainImages);
 	}
 
 	// create graphics pipeline
 	{
 		//shader stages
-		VkShaderModule vert = createShaderModule(g.dev, "vert.spv");
-		VkShaderModule frag = createShaderModule(g.dev, "frag.spv");
+		VkShaderModule vert = createShaderModule(gi->dev, "vert.spv");
+		VkShaderModule frag = createShaderModule(gi->dev, "frag.spv");
 
 		VkPipelineShaderStageCreateInfo vertStageInfo = {};
 		vertStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -509,7 +522,7 @@ struct Graphics createGraphics() {
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 
-		if (vkCreatePipelineLayout(g.dev, &pipelineLayoutInfo, NULL, &g.pipelineLayout) != VK_SUCCESS) {
+		if (vkCreatePipelineLayout(gi->dev, &pipelineLayoutInfo, NULL, &g.pipelineLayout) != VK_SUCCESS) {
 			printf("failed to create pipeline layout!\n");
 			exit(1);
 		}
@@ -553,7 +566,7 @@ struct Graphics createGraphics() {
 		renderPassInfo.pDependencies = &dependency;
 
 
-		if (vkCreateRenderPass(g.dev, &renderPassInfo, NULL, &g.renderPass)
+		if (vkCreateRenderPass(gi->dev, &renderPassInfo, NULL, &g.renderPass)
 				!= VK_SUCCESS)
 		{
 			printf("failed to create render pass!\n");
@@ -578,24 +591,24 @@ struct Graphics createGraphics() {
 		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 		pipelineInfo.basePipelineIndex = -1;
 
-		if (vkCreateGraphicsPipelines(g.dev, VK_NULL_HANDLE, 1, &pipelineInfo,
+		if (vkCreateGraphicsPipelines(gi->dev, VK_NULL_HANDLE, 1, &pipelineInfo,
 				NULL, &g.graphicsPipeline) != VK_SUCCESS)
 		{
 			printf("failed to create graphics pipeline!\n");
 		}
 
-		vkDestroyShaderModule(g.dev, vert, NULL);
-		vkDestroyShaderModule(g.dev, frag, NULL);
+		vkDestroyShaderModule(gi->dev, vert, NULL);
+		vkDestroyShaderModule(gi->dev, frag, NULL);
 	}
 
 	// create command pool
 	{
 		VkCommandPoolCreateInfo poolInfo = {};
 		poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-		poolInfo.queueFamilyIndex = g.qfi[QF_GRAPHICS];
+		poolInfo.queueFamilyIndex = gi->qfi[QF_GRAPHICS];
 		poolInfo.flags = 0;
 
-		if (vkCreateCommandPool(g.dev, &poolInfo, NULL, &g.commandPool) != VK_SUCCESS) {
+		if (vkCreateCommandPool(gi->dev, &poolInfo, NULL, &g.commandPool) != VK_SUCCESS) {
 			printf("failed to create command pool!");
 		}
 
@@ -605,7 +618,7 @@ struct Graphics createGraphics() {
 		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 		allocInfo.commandBufferCount = g.swapchainImageCount;
 
-		if (vkAllocateCommandBuffers(g.dev, &allocInfo, g.commandBuffers) != VK_SUCCESS) {
+		if (vkAllocateCommandBuffers(gi->dev, &allocInfo, g.commandBuffers) != VK_SUCCESS) {
 			printf("failed to allocate command buffers!");
 			exit(1);
 		}
@@ -632,7 +645,7 @@ struct Graphics createGraphics() {
 		createInfo.subresourceRange.layerCount = 1;
 		createInfo.image = g.swapchainImages[i];
 
-		if (vkCreateImageView(g.dev, &createInfo, NULL,
+		if (vkCreateImageView(gi->dev, &createInfo, NULL,
 				&g.swapchainImageViews[i]) != VK_SUCCESS)
 		{
 			printf("failed to create image view!\n");
@@ -652,7 +665,7 @@ struct Graphics createGraphics() {
 		framebufferInfo.attachmentCount = 1;
 		framebufferInfo.pAttachments = attachments;
 
-		if (vkCreateFramebuffer(g.dev, &framebufferInfo, NULL,
+		if (vkCreateFramebuffer(gi->dev, &framebufferInfo, NULL,
 				&g.swapchainFramebuffers[i]) != VK_SUCCESS)
 		{
 			printf("failed to create framebuffer!\n");
@@ -701,9 +714,9 @@ struct Graphics createGraphics() {
 	{
 		VkSemaphoreCreateInfo semaphoreInfo = {};
 		semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-		if (vkCreateSemaphore(g.dev, &semaphoreInfo, NULL,
+		if (vkCreateSemaphore(gi->dev, &semaphoreInfo, NULL,
 				&g.imageAvailableSemaphore) != VK_SUCCESS ||
-			vkCreateSemaphore(g.dev, &semaphoreInfo, NULL,
+			vkCreateSemaphore(gi->dev, &semaphoreInfo, NULL,
 				&g.renderFinishedSemaphore) != VK_SUCCESS)
 		{
 			printf("failed to create semaphores!\n");
@@ -713,14 +726,22 @@ struct Graphics createGraphics() {
 	return g;
 }
 
-void drawFrame(struct Graphics *g) {
+bool drawFrame(struct GraphicsInstance *gi, struct Graphics *g) {
 	// let previous frame finish
-	vkQueueWaitIdle(g->pq);
+	vkQueueWaitIdle(gi->pq);
 
 	// draw frame
 	uint32_t imageIndex;
-	vkAcquireNextImageKHR(g->dev, g->swapchain, UINT64_MAX,
+	VkResult result;
+	result = vkAcquireNextImageKHR(gi->dev, g->swapchain, UINT64_MAX,
 			g->imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+	if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+		return false;
+	}
+	if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+		printf("failed to acquire swap chain image!\n");
+		exit(1);
+	}
 
 	VkSubmitInfo submitInfo = {};
 	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -739,7 +760,7 @@ void drawFrame(struct Graphics *g) {
 	submitInfo.signalSemaphoreCount = 1;
 	submitInfo.pSignalSemaphores = signalSemaphores;
 
-	if (vkQueueSubmit(g->gq, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+	if (vkQueueSubmit(gi->gq, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
 		printf("failed to submit draw command buffer!\n");
 		exit(1);
 	}
@@ -756,35 +777,47 @@ void drawFrame(struct Graphics *g) {
 	presentInfo.pImageIndices = &imageIndex;
 	presentInfo.pResults = NULL;
 
-	vkQueuePresentKHR(g->pq, &presentInfo);
+	result = vkQueuePresentKHR(gi->pq, &presentInfo);
+	if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+		return false;
+	}
+	if (result != VK_SUCCESS) {
+		printf("failed to present swap chain image!\n");
+		exit(1);
+	}
+	return true;
 }
 
 
-void destroyGraphics(struct Graphics *g) {
-    vkDeviceWaitIdle(g->dev);
+void destroyGraphics(struct GraphicsInstance *gi, struct Graphics *g) {
+    vkDeviceWaitIdle(gi->dev);
 
-	vkDestroySemaphore(g->dev, g->renderFinishedSemaphore, NULL);
-	vkDestroySemaphore(g->dev, g->imageAvailableSemaphore, NULL);
+	vkDestroySemaphore(gi->dev, g->renderFinishedSemaphore, NULL);
+	vkDestroySemaphore(gi->dev, g->imageAvailableSemaphore, NULL);
 
-	vkDestroyCommandPool(g->dev, g->commandPool, NULL);
+	// @Performance wasteful?
+	vkDestroyCommandPool(gi->dev, g->commandPool, NULL);
 
 	range (i, g->swapchainImageCount) {
-		vkDestroyFramebuffer(g->dev, g->swapchainFramebuffers[i], NULL);
-		vkDestroyImageView(g->dev, g->swapchainImageViews[i], NULL);
+		vkDestroyFramebuffer(gi->dev, g->swapchainFramebuffers[i], NULL);
+		vkDestroyImageView(gi->dev, g->swapchainImageViews[i], NULL);
 	}
 
-	vkDestroyPipeline(g->dev, g->graphicsPipeline, NULL);
-	vkDestroyPipelineLayout(g->dev, g->pipelineLayout, NULL);
-	vkDestroyRenderPass(g->dev, g->renderPass, NULL);
+	vkDestroyPipeline(gi->dev, g->graphicsPipeline, NULL);
+	vkDestroyPipelineLayout(gi->dev, g->pipelineLayout, NULL);
+	vkDestroyRenderPass(gi->dev, g->renderPass, NULL);
 
-	vkDestroySwapchainKHR(g->dev, g->swapchain, NULL);
-	vkDestroyDevice(g->dev, NULL);
+	vkDestroySwapchainKHR(gi->dev, g->swapchain, NULL);
+}
 
-	vkDestroySurfaceKHR(g->instance, g->surface, NULL);
+void destroyGraphicsInstance(struct GraphicsInstance *gi) {
+	vkDestroyDevice(gi->dev, NULL);
 
-	vkDestroyInstance(g->instance, NULL);
+	vkDestroySurfaceKHR(gi->instance, gi->surface, NULL);
 
-	glfwDestroyWindow(g->window);
+	vkDestroyInstance(gi->instance, NULL);
+
+	glfwDestroyWindow(gi->window);
 
 	glfwTerminate();
 }
