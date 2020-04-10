@@ -22,6 +22,9 @@ struct GraphicsInstance {
 
 	uint32_t qfi[QF_LEN];
 	VkQueue gq, pq;
+
+	VkBuffer vertexBuffer;
+	VkDeviceMemory vertexBufferMemory;
 };
 
 struct Graphics {
@@ -42,6 +45,15 @@ struct Graphics {
 
 	VkSemaphore imageAvailableSemaphore;
 	VkSemaphore renderFinishedSemaphore;
+};
+
+struct Vertex {
+	float pos[2];
+	float color[3];
+} vertex_data[3] = {
+	{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+	{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+	{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
 };
 
 VkShaderModule createShaderModule(VkDevice dev, char* filename) {
@@ -311,6 +323,52 @@ struct GraphicsInstance createGraphicsInstance() {
 		vkGetDeviceQueue(g.dev, g.qfi[QF_PRESENTATION], 0, &g.pq);
 	}
 
+	// create vertex buffer
+	{
+		VkBufferCreateInfo bufferInfo = {};
+		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bufferInfo.size = sizeof(struct Vertex) * 3;
+		bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+		bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		if (vkCreateBuffer(g.dev, &bufferInfo, NULL, &g.vertexBuffer) != VK_SUCCESS) {
+			printf("Failed to create vertex buffer!\n");
+			exit(1);
+		}
+
+		VkMemoryRequirements memRequirements;
+		vkGetBufferMemoryRequirements(g.dev, g.vertexBuffer, &memRequirements);
+
+		VkMemoryAllocateInfo allocInfo = {};
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.allocationSize = memRequirements.size;
+
+		VkMemoryPropertyFlags properties =
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+		VkPhysicalDeviceMemoryProperties memProperties;
+		vkGetPhysicalDeviceMemoryProperties(g.dev_p, &memProperties);
+		for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+			if (
+				(memRequirements.memoryTypeBits & (1 << i)) &&
+				(memProperties.memoryTypes[i].propertyFlags & properties) == properties
+			) {
+				allocInfo.memoryTypeIndex = i;
+				break;
+			}
+		}
+		if (vkAllocateMemory(g.dev, &allocInfo, NULL, &g.vertexBufferMemory) != VK_SUCCESS)
+		{
+			printf("Failed to allocate vertex buffer memory!\n");
+			exit(1);
+		}
+		vkBindBufferMemory(g.dev, g.vertexBuffer, g.vertexBufferMemory, 0);
+
+		void* data;
+		vkMapMemory(g.dev, g.vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+		memcpy(data, vertex_data, (size_t) bufferInfo.size);
+		vkUnmapMemory(g.dev, g.vertexBufferMemory);
+	}
+
+
 	return g;
 }
 
@@ -466,10 +524,26 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
 			{vertStageInfo, fragStageInfo};
 
 		// fixed function stages
+		VkVertexInputBindingDescription bindingDescription = {};
+		bindingDescription.binding = 0;
+		bindingDescription.stride = sizeof(struct Vertex);
+		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+		VkVertexInputAttributeDescription attributeDescriptions[2] = {};
+		attributeDescriptions[0].binding = 0;
+		attributeDescriptions[0].location = 0;
+		attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+		attributeDescriptions[0].offset = 0;
+		attributeDescriptions[1].binding = 0;
+		attributeDescriptions[1].location = 1;
+		attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[1].offset = sizeof(float[2]);
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
 		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-		vertexInputInfo.vertexBindingDescriptionCount = 0;
-		vertexInputInfo.vertexAttributeDescriptionCount = 0;
+		vertexInputInfo.vertexBindingDescriptionCount = 1;
+		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+		vertexInputInfo.vertexAttributeDescriptionCount = 2;
+		vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions;
 
 		VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
 		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -624,7 +698,7 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
 		}
 	}
 
-	// create views, framebuffers, commandbuffers
+	// create views, framebuffers, vertexbuffer, commandbuffers
 	range (i, g.swapchainImageCount) {
 		// image view
 		VkImageViewCreateInfo createInfo = {};
@@ -701,6 +775,11 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
 
 		vkCmdBeginRenderPass(g.commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 		vkCmdBindPipeline(g.commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, g.graphicsPipeline);
+
+		VkBuffer vertexBuffers[] = {gi->vertexBuffer};
+		VkDeviceSize offsets[] = {0};
+		vkCmdBindVertexBuffers(g.commandBuffers[i], 0, 1, vertexBuffers, offsets);
+
 		vkCmdDraw(g.commandBuffers[i], 3, 1, 0, 0);
 		vkCmdEndRenderPass(g.commandBuffers[i]);
 
@@ -811,6 +890,9 @@ void destroyGraphics(struct GraphicsInstance *gi, struct Graphics *g) {
 }
 
 void destroyGraphicsInstance(struct GraphicsInstance *gi) {
+	vkDestroyBuffer(gi->dev, gi->vertexBuffer, NULL);
+    vkFreeMemory(gi->dev, gi->vertexBufferMemory, NULL);
+
 	vkDestroyDevice(gi->dev, NULL);
 
 	vkDestroySurfaceKHR(gi->instance, gi->surface, NULL);
