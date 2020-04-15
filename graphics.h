@@ -23,8 +23,11 @@ struct GraphicsInstance {
 	uint32_t qfi[QF_LEN];
 	VkQueue gq, pq;
 
-	VkBuffer vertexBuffer;
-	VkDeviceMemory vertexBufferMemory;
+	VkBuffer stagingBuffer;
+	VkDeviceMemory stagingMemory;
+	void *stagingData;
+	VkBuffer devBuffer;
+	VkDeviceMemory devMemory;
 };
 
 struct Graphics {
@@ -88,6 +91,50 @@ VkShaderModule createShaderModule(VkDevice dev, char* filename) {
 	return result;
 }
 
+void createBuffer(
+	struct GraphicsInstance *gi,
+	VkDeviceSize size,
+	VkBufferUsageFlags usage,
+	VkMemoryPropertyFlags properties,
+	VkBuffer *buffer,
+	VkDeviceMemory *bufferMemory
+) {
+	VkBufferCreateInfo bufferInfo = {};
+	bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	bufferInfo.size = size;
+	bufferInfo.usage = usage;
+	bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	if (vkCreateBuffer(gi->dev, &bufferInfo, NULL, buffer) != VK_SUCCESS) {
+		printf("Failed to create vertex buffer!\n");
+		exit(1);
+	}
+
+	VkMemoryRequirements memRequirements;
+	vkGetBufferMemoryRequirements(gi->dev, *buffer, &memRequirements);
+
+	VkMemoryAllocateInfo allocInfo = {};
+	allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	allocInfo.allocationSize = memRequirements.size;
+
+	VkPhysicalDeviceMemoryProperties memProperties;
+	vkGetPhysicalDeviceMemoryProperties(gi->dev_p, &memProperties);
+	for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+		if (
+			(memRequirements.memoryTypeBits & (1 << i)) &&
+			(memProperties.memoryTypes[i].propertyFlags & properties) == properties
+		) {
+			allocInfo.memoryTypeIndex = i;
+			break;
+		}
+	}
+	if (vkAllocateMemory(gi->dev, &allocInfo, NULL, bufferMemory) != VK_SUCCESS)
+	{
+		printf("Failed to allocate vertex buffer memory!\n");
+		exit(1);
+	}
+	vkBindBufferMemory(gi->dev, *buffer, *bufferMemory, 0);
+}
+
 struct GraphicsInstance createGraphicsInstance() {
 	///////////////
 	// Constants
@@ -109,7 +156,9 @@ struct GraphicsInstance createGraphicsInstance() {
 	const char* required_exts[REQUIRED_EXT_COUNT];
 	required_exts[0] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
 
+	// @Cleanup maybe we should be using these more consistently
 	struct GraphicsInstance g;
+	struct GraphicsInstance *gi = &g;
 
 	///////////////////////////
 	// Window Initialisation
@@ -323,51 +372,25 @@ struct GraphicsInstance createGraphicsInstance() {
 		vkGetDeviceQueue(g.dev, g.qfi[QF_PRESENTATION], 0, &g.pq);
 	}
 
-	// create vertex buffer
 	{
-		VkBufferCreateInfo bufferInfo = {};
-		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-		bufferInfo.size = sizeof(struct Vertex) * 3;
-		bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-		bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-		if (vkCreateBuffer(g.dev, &bufferInfo, NULL, &g.vertexBuffer) != VK_SUCCESS) {
-			printf("Failed to create vertex buffer!\n");
-			exit(1);
-		}
-
-		VkMemoryRequirements memRequirements;
-		vkGetBufferMemoryRequirements(g.dev, g.vertexBuffer, &memRequirements);
-
-		VkMemoryAllocateInfo allocInfo = {};
-		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-		allocInfo.allocationSize = memRequirements.size;
-
-		VkMemoryPropertyFlags properties =
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-		VkPhysicalDeviceMemoryProperties memProperties;
-		vkGetPhysicalDeviceMemoryProperties(g.dev_p, &memProperties);
-		for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-			if (
-				(memRequirements.memoryTypeBits & (1 << i)) &&
-				(memProperties.memoryTypes[i].propertyFlags & properties) == properties
-			) {
-				allocInfo.memoryTypeIndex = i;
-				break;
-			}
-		}
-		if (vkAllocateMemory(g.dev, &allocInfo, NULL, &g.vertexBufferMemory) != VK_SUCCESS)
-		{
-			printf("Failed to allocate vertex buffer memory!\n");
-			exit(1);
-		}
-		vkBindBufferMemory(g.dev, g.vertexBuffer, g.vertexBufferMemory, 0);
-
-		void* data;
-		vkMapMemory(g.dev, g.vertexBufferMemory, 0, bufferInfo.size, 0, &data);
-		memcpy(data, vertex_data, (size_t) bufferInfo.size);
-		vkUnmapMemory(g.dev, g.vertexBufferMemory);
+		createBuffer(
+			gi,
+			sizeof(vertex_data),
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			&gi->stagingBuffer,
+			&gi->stagingMemory
+		);
+		vkMapMemory(gi->dev, gi->stagingMemory, 0, sizeof(vertex_data), 0, &gi->stagingData);
+		createBuffer(
+			gi,
+			sizeof(vertex_data),
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&gi->devBuffer,
+			&gi->devMemory
+		);
 	}
-
 
 	return g;
 }
@@ -757,6 +780,12 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
 			exit(1);
 		}
 
+		VkBufferCopy copyRegion = {};
+		copyRegion.srcOffset = 0; // Optional
+		copyRegion.dstOffset = 0; // Optional
+		copyRegion.size = sizeof(vertex_data);
+		vkCmdCopyBuffer(g.commandBuffers[i], gi->stagingBuffer, gi->devBuffer, 1, &copyRegion);
+
 		VkRenderPassBeginInfo renderPassInfo = {};
 		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 		renderPassInfo.renderPass = g.renderPass;
@@ -776,7 +805,7 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
 		vkCmdBeginRenderPass(g.commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 		vkCmdBindPipeline(g.commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, g.graphicsPipeline);
 
-		VkBuffer vertexBuffers[] = {gi->vertexBuffer};
+		VkBuffer vertexBuffers[] = {gi->devBuffer};
 		VkDeviceSize offsets[] = {0};
 		vkCmdBindVertexBuffers(g.commandBuffers[i], 0, 1, vertexBuffers, offsets);
 
@@ -808,6 +837,10 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
 bool drawFrame(struct GraphicsInstance *gi, struct Graphics *g) {
 	// let previous frame finish
 	vkQueueWaitIdle(gi->pq);
+
+	// copy vertex data
+	vertex_data[0].pos[1] -= 0.001f;
+	memcpy(gi->stagingData, vertex_data, sizeof(vertex_data));
 
 	// draw frame
 	uint32_t imageIndex;
@@ -890,8 +923,12 @@ void destroyGraphics(struct GraphicsInstance *gi, struct Graphics *g) {
 }
 
 void destroyGraphicsInstance(struct GraphicsInstance *gi) {
-	vkDestroyBuffer(gi->dev, gi->vertexBuffer, NULL);
-    vkFreeMemory(gi->dev, gi->vertexBufferMemory, NULL);
+	vkDestroyBuffer(gi->dev, gi->devBuffer, NULL);
+    vkFreeMemory(gi->dev, gi->devMemory, NULL);
+
+	vkUnmapMemory(gi->dev, gi->stagingMemory);
+	vkDestroyBuffer(gi->dev, gi->stagingBuffer, NULL);
+    vkFreeMemory(gi->dev, gi->stagingMemory, NULL);
 
 	vkDestroyDevice(gi->dev, NULL);
 
