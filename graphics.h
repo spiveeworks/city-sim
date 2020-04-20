@@ -54,11 +54,16 @@ struct Vertex {
 	float pos[2];
 	float color[3];
 	float circle[2];
-} vertex_data[3] = {
-	{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, -2.0}},
-	{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
-	{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {-1.0f, 1.0f}}
 };
+#define VERTEX_BUFFER_LEN 3
+#define VERTEX_BUFFER_BYTES (VERTEX_BUFFER_LEN * sizeof(struct Vertex))
+
+size_t build_vertex_data(struct Vertex* vertex_data) {
+	vertex_data[0] = (struct Vertex){{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, -2.0}};
+	vertex_data[1] = (struct Vertex){{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}};
+	vertex_data[2] = (struct Vertex){{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {-1.0f, 1.0f}};
+	return 3;
+}
 
 VkShaderModule createShaderModule(VkDevice dev, char* filename) {
 	size_t size = 0;
@@ -376,16 +381,16 @@ struct GraphicsInstance createGraphicsInstance() {
 	{
 		createBuffer(
 			gi,
-			sizeof(vertex_data),
+			VERTEX_BUFFER_BYTES,
 			VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 			&gi->stagingBuffer,
 			&gi->stagingMemory
 		);
-		vkMapMemory(gi->dev, gi->stagingMemory, 0, sizeof(vertex_data), 0, &gi->stagingData);
+		vkMapMemory(gi->dev, gi->stagingMemory, 0, VERTEX_BUFFER_BYTES, 0, &gi->stagingData);
 		createBuffer(
 			gi,
-			sizeof(vertex_data),
+			VERTEX_BUFFER_BYTES,
 			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&gi->devBuffer,
@@ -794,7 +799,7 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
 		VkBufferCopy copyRegion = {};
 		copyRegion.srcOffset = 0; // Optional
 		copyRegion.dstOffset = 0; // Optional
-		copyRegion.size = sizeof(vertex_data);
+		copyRegion.size = VERTEX_BUFFER_BYTES;
 		vkCmdCopyBuffer(g.commandBuffers[i], gi->stagingBuffer, gi->devBuffer, 1, &copyRegion);
 
 		VkRenderPassBeginInfo renderPassInfo = {};
@@ -820,7 +825,7 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
 		VkDeviceSize offsets[] = {0};
 		vkCmdBindVertexBuffers(g.commandBuffers[i], 0, 1, vertexBuffers, offsets);
 
-		vkCmdDraw(g.commandBuffers[i], 3, 1, 0, 0);
+		vkCmdDraw(g.commandBuffers[i], VERTEX_BUFFER_LEN, 1, 0, 0);
 		vkCmdEndRenderPass(g.commandBuffers[i]);
 
 		if (vkEndCommandBuffer(g.commandBuffers[i]) != VK_SUCCESS) {
@@ -850,8 +855,14 @@ bool drawFrame(struct GraphicsInstance *gi, struct Graphics *g) {
 	vkQueueWaitIdle(gi->pq);
 
 	// copy vertex data
-	vertex_data[0].pos[1] -= 0.001f;
-	memcpy(gi->stagingData, vertex_data, sizeof(vertex_data));
+	size_t vertex_count = build_vertex_data((struct Vertex*)gi->stagingData);
+	if (vertex_count > VERTEX_BUFFER_LEN) {
+		printf("Vertex count exceeds buffer length\n");
+		exit(1);
+	} else if (vertex_count != VERTEX_BUFFER_LEN) {
+		printf("Variable length buffers currently not supported\n");
+		exit(1);
+	}
 
 	// draw frame
 	uint32_t imageIndex;
