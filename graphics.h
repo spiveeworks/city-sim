@@ -53,10 +53,11 @@ struct Graphics {
 struct Vertex {
 	float pos[2];
 	float color[3];
+	float circle[2];
 } vertex_data[3] = {
-	{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-	{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-	{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+	{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, -2.0}},
+	{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+	{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {-1.0f, 1.0f}}
 };
 
 VkShaderModule createShaderModule(VkDevice dev, char* filename) {
@@ -552,7 +553,7 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
 		bindingDescription.stride = sizeof(struct Vertex);
 		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-		VkVertexInputAttributeDescription attributeDescriptions[2] = {};
+		VkVertexInputAttributeDescription attributeDescriptions[3] = {};
 		attributeDescriptions[0].binding = 0;
 		attributeDescriptions[0].location = 0;
 		attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
@@ -561,11 +562,15 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
 		attributeDescriptions[1].location = 1;
 		attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
 		attributeDescriptions[1].offset = sizeof(float[2]);
+		attributeDescriptions[2].binding = 0;
+		attributeDescriptions[2].location = 2;
+		attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+		attributeDescriptions[2].offset = sizeof(float[5]);
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
 		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 		vertexInputInfo.vertexBindingDescriptionCount = 1;
 		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-		vertexInputInfo.vertexAttributeDescriptionCount = 2;
+		vertexInputInfo.vertexAttributeDescriptionCount = 3;
 		vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions;
 
 		VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
@@ -606,8 +611,14 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
 		VkPipelineColorBlendAttachmentState colorBlendAttachment = {};
 		colorBlendAttachment.colorWriteMask =
 				VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-				VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-		colorBlendAttachment.blendEnable = VK_FALSE;
+				VK_COLOR_COMPONENT_B_BIT;
+		colorBlendAttachment.blendEnable = VK_TRUE;
+		colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+		colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+		colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+		colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+		colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
 
 		VkPipelineColorBlendStateCreateInfo colorBlending = {};
 		colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
