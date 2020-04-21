@@ -44,7 +44,8 @@ struct Graphics {
 	VkImageView swapchainImageViews[STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT];
 	VkFramebuffer swapchainFramebuffers[STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT];
 	VkCommandPool commandPool;
-	VkCommandBuffer commandBuffers[STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT];
+	bool bufferAllocated;
+	VkCommandBuffer commandBuffer;
 
 	VkSemaphore imageAvailableSemaphore;
 	VkSemaphore renderFinishedSemaphore;
@@ -55,7 +56,7 @@ struct Vertex {
 	float color[3];
 	float circle[2];
 };
-#define VERTEX_BUFFER_LEN 61206
+#define VERTEX_BUFFER_LEN 65536
 #define VERTEX_BUFFER_BYTES (VERTEX_BUFFER_LEN * sizeof(struct Vertex))
 
 size_t build_vertex_data(struct Vertex* vertex_data) {
@@ -427,6 +428,7 @@ struct GraphicsInstance createGraphicsInstance() {
 
 struct Graphics createGraphics(struct GraphicsInstance *gi) {
 	struct Graphics g;
+	g.bufferAllocated = false;
 
 	// create swapchain
 	{
@@ -743,21 +745,10 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
 		VkCommandPoolCreateInfo poolInfo = {};
 		poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
 		poolInfo.queueFamilyIndex = gi->qfi[QF_GRAPHICS];
-		poolInfo.flags = 0;
+		poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
 
 		if (vkCreateCommandPool(gi->dev, &poolInfo, NULL, &g.commandPool) != VK_SUCCESS) {
 			printf("failed to create command pool!");
-		}
-
-		VkCommandBufferAllocateInfo allocInfo = {};
-		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-		allocInfo.commandPool = g.commandPool;
-		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-		allocInfo.commandBufferCount = g.swapchainImageCount;
-
-		if (vkAllocateCommandBuffers(gi->dev, &allocInfo, g.commandBuffers) != VK_SUCCESS) {
-			printf("failed to allocate command buffers!");
-			exit(1);
 		}
 	}
 
@@ -808,54 +799,6 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
 			printf("failed to create framebuffer!\n");
 			exit(1);
 		}
-
-		// command buffer
-		VkCommandBufferBeginInfo beginInfo = {};
-		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-		beginInfo.flags = 0;
-		beginInfo.pInheritanceInfo = NULL;
-
-		if (vkBeginCommandBuffer(g.commandBuffers[i], &beginInfo) != VK_SUCCESS) {
-			printf("failed to begin recording command buffer!\n");
-			exit(1);
-		}
-
-		VkBufferCopy copyRegion = {};
-		copyRegion.srcOffset = 0; // Optional
-		copyRegion.dstOffset = 0; // Optional
-		copyRegion.size = VERTEX_BUFFER_BYTES;
-		vkCmdCopyBuffer(g.commandBuffers[i], gi->stagingBuffer, gi->devBuffer, 1, &copyRegion);
-
-		VkRenderPassBeginInfo renderPassInfo = {};
-		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-		renderPassInfo.renderPass = g.renderPass;
-		renderPassInfo.framebuffer = g.swapchainFramebuffers[i];
-
-		renderPassInfo.renderArea.offset = (VkOffset2D) {0, 0};
-		renderPassInfo.renderArea.extent = g.swapchainExtent;
-
-		VkClearValue clearColor;
-		clearColor.color.float32[0] = 0.0f;
-		clearColor.color.float32[1] = 0.0f;
-		clearColor.color.float32[2] = 0.0f;
-		clearColor.color.float32[3] = 1.0f;
-		renderPassInfo.clearValueCount = 1;
-		renderPassInfo.pClearValues = &clearColor;
-
-		vkCmdBeginRenderPass(g.commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-		vkCmdBindPipeline(g.commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, g.graphicsPipeline);
-
-		VkBuffer vertexBuffers[] = {gi->devBuffer};
-		VkDeviceSize offsets[] = {0};
-		vkCmdBindVertexBuffers(g.commandBuffers[i], 0, 1, vertexBuffers, offsets);
-
-		vkCmdDraw(g.commandBuffers[i], VERTEX_BUFFER_LEN, 1, 0, 0);
-		vkCmdEndRenderPass(g.commandBuffers[i]);
-
-		if (vkEndCommandBuffer(g.commandBuffers[i]) != VK_SUCCESS) {
-			printf("failed to record command buffer!\n");
-			exit(1);
-		}
 	}
 
 	// create semaphores
@@ -874,19 +817,28 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
 	return g;
 }
 
+int frame = 0;
 bool drawFrame(struct GraphicsInstance *gi, struct Graphics *g) {
 	// let previous frame finish
 	vkQueueWaitIdle(gi->pq);
+	if (g->bufferAllocated) {
+		vkFreeCommandBuffers(gi->dev, g->commandPool, 1, &g->commandBuffer);
+		g->bufferAllocated = false;
+	}
+
+	frame++;
+	if (frame % 300 == 0) {
+		printf("reached frame %d (%d seconds)\n", frame, frame/60);
+	}
 
 	// copy vertex data
 	size_t vertex_count = build_vertex_data((struct Vertex*)gi->stagingData);
 	if (vertex_count > VERTEX_BUFFER_LEN) {
 		printf("Vertex count exceeds buffer length\n");
 		exit(1);
-	} else if (vertex_count != VERTEX_BUFFER_LEN) {
-		printf("Variable length buffers currently not supported\n");
-		printf("count = %u, buffer length = %u\n", vertex_count, VERTEX_BUFFER_LEN);
-		exit(1);
+	}
+	if (frame * 60 < vertex_count) {
+		vertex_count = 60*frame;
 	}
 
 	// draw frame
@@ -902,6 +854,67 @@ bool drawFrame(struct GraphicsInstance *gi, struct Graphics *g) {
 		exit(1);
 	}
 
+	// command buffer
+	{
+		VkCommandBufferAllocateInfo allocInfo = {};
+		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		allocInfo.commandPool = g->commandPool;
+		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		allocInfo.commandBufferCount = 1;
+
+		if (vkAllocateCommandBuffers(gi->dev, &allocInfo, &g->commandBuffer) != VK_SUCCESS) {
+			printf("failed to allocate command buffer!");
+			exit(1);
+		}
+		g->bufferAllocated = true;
+		VkCommandBufferBeginInfo beginInfo = {};
+		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		beginInfo.flags = 0;
+		beginInfo.pInheritanceInfo = NULL;
+
+		if (vkBeginCommandBuffer(g->commandBuffer, &beginInfo) != VK_SUCCESS) {
+			printf("failed to begin recording command buffer!\n");
+			exit(1);
+		}
+
+		VkBufferCopy copyRegion = {};
+		copyRegion.srcOffset = 0; // Optional
+		copyRegion.dstOffset = 0; // Optional
+		copyRegion.size = VERTEX_BUFFER_BYTES;
+		vkCmdCopyBuffer(g->commandBuffer, gi->stagingBuffer, gi->devBuffer, 1, &copyRegion);
+
+		VkRenderPassBeginInfo renderPassInfo = {};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		renderPassInfo.renderPass = g->renderPass;
+		renderPassInfo.framebuffer = g->swapchainFramebuffers[imageIndex];
+
+		renderPassInfo.renderArea.offset = (VkOffset2D) {0, 0};
+		renderPassInfo.renderArea.extent = g->swapchainExtent;
+
+		VkClearValue clearColor;
+		clearColor.color.float32[0] = 0.0f;
+		clearColor.color.float32[1] = 0.0f;
+		clearColor.color.float32[2] = 0.0f;
+		clearColor.color.float32[3] = 1.0f;
+		renderPassInfo.clearValueCount = 1;
+		renderPassInfo.pClearValues = &clearColor;
+
+		vkCmdBeginRenderPass(g->commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+		vkCmdBindPipeline(g->commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, g->graphicsPipeline);
+
+		VkBuffer vertexBuffers[] = {gi->devBuffer};
+		VkDeviceSize offsets[] = {0};
+		vkCmdBindVertexBuffers(g->commandBuffer, 0, 1, vertexBuffers, offsets);
+
+		vkCmdDraw(g->commandBuffer, vertex_count, 1, 0, 0);
+		vkCmdEndRenderPass(g->commandBuffer);
+
+		if (vkEndCommandBuffer(g->commandBuffer) != VK_SUCCESS) {
+			printf("failed to record command buffer!\n");
+			exit(1);
+		}
+	}
+
 	VkSubmitInfo submitInfo = {};
 	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
@@ -913,7 +926,7 @@ bool drawFrame(struct GraphicsInstance *gi, struct Graphics *g) {
 	submitInfo.pWaitDstStageMask = waitStages;
 
 	submitInfo.commandBufferCount = 1;
-	submitInfo.pCommandBuffers = &g->commandBuffers[imageIndex];
+	submitInfo.pCommandBuffers = &g->commandBuffer;
 
 	VkSemaphore signalSemaphores[] = {g->renderFinishedSemaphore};
 	submitInfo.signalSemaphoreCount = 1;
