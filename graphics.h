@@ -55,14 +55,38 @@ struct Vertex {
 	float color[3];
 	float circle[2];
 };
-#define VERTEX_BUFFER_LEN 3
+#define VERTEX_BUFFER_LEN 61206
 #define VERTEX_BUFFER_BYTES (VERTEX_BUFFER_LEN * sizeof(struct Vertex))
 
 size_t build_vertex_data(struct Vertex* vertex_data) {
-	vertex_data[0] = (struct Vertex){{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, -2.0}};
-	vertex_data[1] = (struct Vertex){{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}};
-	vertex_data[2] = (struct Vertex){{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {-1.0f, 1.0f}};
-	return 3;
+	size_t total = 0;
+	float dx = 0.95f/100.0f;
+	range (i, 100+1) {
+		float x = -1.0f + (float)i / 50.0f;
+		float r = (float)i / 100.0f;
+		range(j, 100+1) {
+			float y = -1.0f + (float)j / 50.0f;
+			float g = (float)j / 100.0f;
+			struct Vertex vs[2][2] =
+			{
+				{
+					{{x-dx, y-dx}, {r, g, 1.0f-g}, {-1.0f, -1.0f}},
+					{{x+dx, y-dx}, {r, g, 1.0f-g}, { 1.0f, -1.0f}},
+				},
+				{
+					{{x-dx, y+dx}, {r, g, 1.0f-g}, {-1.0f,  1.0f}},
+					{{x+dx, y+dx}, {r, g, 1.0f-g}, { 1.0f,  1.0f}},
+				}
+			};
+			vertex_data[total++] = vs[0][0];
+			vertex_data[total++] = vs[1][0];
+			vertex_data[total++] = vs[0][1];
+			vertex_data[total++] = vs[1][0];
+			vertex_data[total++] = vs[1][1];
+			vertex_data[total++] = vs[0][1];
+		}
+	}
+	return total;
 }
 
 VkShaderModule createShaderModule(VkDevice dev, char* filename) {
@@ -861,6 +885,7 @@ bool drawFrame(struct GraphicsInstance *gi, struct Graphics *g) {
 		exit(1);
 	} else if (vertex_count != VERTEX_BUFFER_LEN) {
 		printf("Variable length buffers currently not supported\n");
+		printf("count = %u, buffer length = %u\n", vertex_count, VERTEX_BUFFER_LEN);
 		exit(1);
 	}
 
