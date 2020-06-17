@@ -59,36 +59,7 @@ struct Vertex {
 #define VERTEX_BUFFER_LEN 65536
 #define VERTEX_BUFFER_BYTES (VERTEX_BUFFER_LEN * sizeof(struct Vertex))
 
-size_t build_vertex_data(struct Vertex* vertex_data) {
-	size_t total = 0;
-	float dx = 0.95f/100.0f;
-	range (i, 100+1) {
-		float x = -1.0f + (float)i / 50.0f;
-		float r = (float)i / 100.0f;
-		range(j, 100+1) {
-			float y = -1.0f + (float)j / 50.0f;
-			float g = (float)j / 100.0f;
-			struct Vertex vs[2][2] =
-			{
-				{
-					{{x-dx, y-dx}, {r, g, 1.0f-g}, {-1.0f, -1.0f}},
-					{{x+dx, y-dx}, {r, g, 1.0f-g}, { 1.0f, -1.0f}},
-				},
-				{
-					{{x-dx, y+dx}, {r, g, 1.0f-g}, {-1.0f,  1.0f}},
-					{{x+dx, y+dx}, {r, g, 1.0f-g}, { 1.0f,  1.0f}},
-				}
-			};
-			vertex_data[total++] = vs[0][0];
-			vertex_data[total++] = vs[1][0];
-			vertex_data[total++] = vs[0][1];
-			vertex_data[total++] = vs[1][0];
-			vertex_data[total++] = vs[1][1];
-			vertex_data[total++] = vs[0][1];
-		}
-	}
-	return total;
-}
+size_t build_vertex_data(struct Vertex* vertex_data);
 
 VkShaderModule createShaderModule(VkDevice dev, char* filename) {
 	size_t size = 0;
@@ -817,7 +788,6 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
 	return g;
 }
 
-int frame = 0;
 bool drawFrame(struct GraphicsInstance *gi, struct Graphics *g) {
 	// let previous frame finish
 	vkQueueWaitIdle(gi->pq);
@@ -826,19 +796,11 @@ bool drawFrame(struct GraphicsInstance *gi, struct Graphics *g) {
 		g->bufferAllocated = false;
 	}
 
-	frame++;
-	if (frame % 300 == 0) {
-		printf("reached frame %d (%d seconds)\n", frame, frame/60);
-	}
-
 	// copy vertex data
 	size_t vertex_count = build_vertex_data((struct Vertex*)gi->stagingData);
 	if (vertex_count > VERTEX_BUFFER_LEN) {
 		printf("Vertex count exceeds buffer length\n");
 		exit(1);
-	}
-	if (frame * 60 < vertex_count) {
-		vertex_count = 60*frame;
 	}
 
 	// draw frame
