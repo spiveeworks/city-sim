@@ -13,43 +13,51 @@ const num DIM = (1ull << 16) * 100;
 
 struct Char {
 	num x, y;
-	num velx, vely;
 } chars[CHAR_NUM];
 
-void simulate() {
-	const num MAX_VEL = UNIT *10/60;
-	const num MAX_ACC = MAX_VEL / 10;
+#define rand_int(g) ((rand() % (2*(g)+1))-(g))
+
+void init() {
 	range (i, CHAR_NUM) {
-		chars[i].x += chars[i].velx;
-		chars[i].y += chars[i].vely;
-		const int g = 8; // granularity of randomness
-		chars[i].velx += ((rand() % (2*g+1)) - g)*MAX_ACC/g;
-		chars[i].vely += ((rand() % (2*g+1)) - g)*MAX_ACC/g;
+		const int g = 1000; // granularity of randomness
+		const num RANGE = DIM * 7 / 8;
+		chars[i].x = rand_int(g) * RANGE / g;
+		chars[i].y = rand_int(g) * RANGE / g;
+	}
+}
+
+void simulate() {
+	for (size_t i = 1; i < CHAR_NUM; i++) {
+		range (j, i-1) {
+			num dx = chars[i].x - chars[j].x;
+			num dy = chars[i].y - chars[j].y;
+			num qu = dx*dx+dy*dy;
+			if (qu != 0 && qu < UNIT*UNIT*100) {
+				const num C = 10000*UNIT;
+				chars[i].x += C*dx / qu;
+				chars[i].y += C*dy / qu;
+				chars[j].x -= C*dx / qu;
+				chars[j].y -= C*dy / qu;
+			}
+		}
+	}
+	range (i, CHAR_NUM) {
+		const num C = 5000*UNIT;
+		chars[i].x += C/(chars[i].x-DIM);
+		chars[i].x += C/(chars[i].x+DIM);
+		chars[i].y += C/(chars[i].y-DIM);
+		chars[i].y += C/(chars[i].y+DIM);
 	}
 	range (i, CHAR_NUM) {
 		if (chars[i].x > DIM) {
 			chars[i].x = DIM;
-			chars[i].velx = 0;
 		} else if (chars[i].x < -DIM) {
 			chars[i].x = -DIM;
-			chars[i].velx = 0;
 		}
 		if (chars[i].y > DIM) {
 			chars[i].y = DIM;
-			chars[i].vely = 0;
 		} else if (chars[i].y < -DIM) {
 			chars[i].y = -DIM;
-			chars[i].vely = 0;
-		}
-		if (chars[i].velx > MAX_VEL) {
-			chars[i].velx = MAX_VEL;
-		} else if (chars[i].velx < -MAX_VEL) {
-			chars[i].velx = -MAX_VEL;
-		}
-		if (chars[i].vely > MAX_VEL) {
-			chars[i].vely = MAX_VEL;
-		} else if (chars[i].vely < -MAX_VEL) {
-			chars[i].vely = -MAX_VEL;
 		}
 	}
 }
@@ -111,6 +119,8 @@ int main() {
 	bool recreateGraphics = false;
 	glfwSetWindowUserPointer(gi.window, &recreateGraphics);
 	glfwSetFramebufferSizeCallback(gi.window, recordResize);
+
+	init();
 
 	while(!glfwWindowShouldClose(gi.window)) {
 		glfwPollEvents();
