@@ -1,37 +1,97 @@
 #include "graphics.h"
 
+#include "time.h"
+
 int frame = 0;
+
+typedef int64_t num;
+const num UNIT = 1ull << 16;
+
+const num DIM = (1ull << 16) * 100;
+
+#define CHAR_NUM 100
+
+struct Char {
+	num x, y;
+	num velx, vely;
+} chars[CHAR_NUM];
+
+void simulate() {
+	range (i, CHAR_NUM) {
+		chars[i].x += chars[i].velx;
+		chars[i].y += chars[i].vely;
+		if (chars[i].x > DIM) {
+			chars[i].x = DIM;
+			chars[i].velx = 0;
+		} else if (chars[i].x < -DIM) {
+			chars[i].x = -DIM;
+			chars[i].velx = 0;
+		}
+		if (chars[i].y > DIM) {
+			chars[i].y = DIM;
+			chars[i].vely = 0;
+		} else if (chars[i].y < -DIM) {
+			chars[i].y = -DIM;
+			chars[i].vely = 0;
+		}
+		const int g = 8; // granularity of randomness
+		const num MAX_VEL = UNIT *10/60;
+		const num MAX_ACC = MAX_VEL / 10;
+		chars[i].velx += ((rand() % (2*g+1)) - g)*MAX_ACC/g;
+		chars[i].vely += ((rand() % (2*g+1)) - g)*MAX_ACC/g;
+		if (chars[i].velx > MAX_VEL) {
+			chars[i].velx = MAX_VEL;
+		} else if (chars[i].velx < -MAX_VEL) {
+			chars[i].velx = -MAX_VEL;
+		}
+		if (chars[i].vely > MAX_VEL) {
+			chars[i].vely = MAX_VEL;
+		} else if (chars[i].vely < -MAX_VEL) {
+			chars[i].vely = -MAX_VEL;
+		}
+	}
+}
 
 size_t build_vertex_data(struct Vertex* vertex_data) {
 	size_t total = 0;
 	float dx = 0.95f/100.0f;
-	range (i, 100+1) {
-		float x = -1.0f + (float)i / 50.0f;
-		float r = (float)i / 100.0f;
-		range(j, 100+1) {
-			float y = -1.0f + (float)j / 50.0f;
-			float g = (float)j / 100.0f;
-			struct Vertex vs[2][2] =
-			{
-				{
-					{{x-dx, y-dx}, {r, g, 1.0f-g}, {-1.0f, -1.0f}},
-					{{x+dx, y-dx}, {r, g, 1.0f-g}, { 1.0f, -1.0f}},
-				},
-				{
-					{{x-dx, y+dx}, {r, g, 1.0f-g}, {-1.0f,  1.0f}},
-					{{x+dx, y+dx}, {r, g, 1.0f-g}, { 1.0f,  1.0f}},
-				}
-			};
-			vertex_data[total++] = vs[0][0];
-			vertex_data[total++] = vs[1][0];
-			vertex_data[total++] = vs[0][1];
-			vertex_data[total++] = vs[1][0];
-			vertex_data[total++] = vs[1][1];
-			vertex_data[total++] = vs[0][1];
+	range (i, CHAR_NUM) {
+		float x = (float)chars[i].x / (float)DIM;
+		float y = (float)chars[i].y / (float)DIM;
+
+		float c = (float)i*6.0f / (float)CHAR_NUM;
+		float r, g, b;
+		if (c < 1.0f) {
+			r = 1.0f, g = c, b = 0.0f;
+		} else if (c < 2.0f) {
+			r = 2.0f-c, g = 1.0f, b = 0.0f;
+		} else if (c < 3.0f) {
+			r = 0.0f, g = 1.0f, b = c-2.0f;
+		} else if (c < 4.0f) {
+			r = 0.0f, g = 4.0f-c, b = 1.0f;
+		} else if (c < 5.0f) {
+			r = c-4.0f, g = 0.0f, b = 1.0f;
+		} else {
+			r = 1.0f, g = 0.0f, b = 6.0f-c;
 		}
-	}
-	if (frame * 60 < total) {
-		total = 60*frame;
+
+		struct Vertex vs[2][2] =
+		{
+			{
+				{{x-dx, y-dx}, {r, g, b}, {-1.0f, -1.0f}},
+				{{x+dx, y-dx}, {r, g, b}, { 1.0f, -1.0f}},
+			},
+			{
+				{{x-dx, y+dx}, {r, g, b}, {-1.0f,  1.0f}},
+				{{x+dx, y+dx}, {r, g, b}, { 1.0f,  1.0f}},
+			}
+		};
+		vertex_data[total++] = vs[0][0];
+		vertex_data[total++] = vs[1][0];
+		vertex_data[total++] = vs[0][1];
+		vertex_data[total++] = vs[1][0];
+		vertex_data[total++] = vs[1][1];
+		vertex_data[total++] = vs[0][1];
 	}
 	return total;
 }
@@ -42,6 +102,7 @@ void recordResize(GLFWwindow *window, int width, int height) {
 }
 
 int main() {
+	srand(time(NULL));
 	struct GraphicsInstance gi = createGraphicsInstance();
 	struct Graphics g = createGraphics(&gi);
 
@@ -56,6 +117,8 @@ int main() {
 		if (frame % 300 == 0) {
 			printf("reached frame %d (%d seconds)\n", frame, frame/60);
 		}
+
+		simulate();
 
 		if (recreateGraphics || !drawFrame(&gi, &g)) {
 			int width;
