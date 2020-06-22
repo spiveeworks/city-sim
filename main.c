@@ -9,7 +9,7 @@ const num UNIT = 1ull << 16;
 
 const num DIM = (1ull << 16) * 100;
 
-#define CHAR_NUM 100
+#define CHAR_NUM 1000
 
 struct Char {
 	num x, y;
@@ -17,9 +17,16 @@ struct Char {
 } chars[CHAR_NUM];
 
 void simulate() {
+	const num MAX_VEL = UNIT *10/60;
+	const num MAX_ACC = MAX_VEL / 10;
 	range (i, CHAR_NUM) {
 		chars[i].x += chars[i].velx;
 		chars[i].y += chars[i].vely;
+		const int g = 8; // granularity of randomness
+		chars[i].velx += ((rand() % (2*g+1)) - g)*MAX_ACC/g;
+		chars[i].vely += ((rand() % (2*g+1)) - g)*MAX_ACC/g;
+	}
+	range (i, CHAR_NUM) {
 		if (chars[i].x > DIM) {
 			chars[i].x = DIM;
 			chars[i].velx = 0;
@@ -34,11 +41,6 @@ void simulate() {
 			chars[i].y = -DIM;
 			chars[i].vely = 0;
 		}
-		const int g = 8; // granularity of randomness
-		const num MAX_VEL = UNIT *10/60;
-		const num MAX_ACC = MAX_VEL / 10;
-		chars[i].velx += ((rand() % (2*g+1)) - g)*MAX_ACC/g;
-		chars[i].vely += ((rand() % (2*g+1)) - g)*MAX_ACC/g;
 		if (chars[i].velx > MAX_VEL) {
 			chars[i].velx = MAX_VEL;
 		} else if (chars[i].velx < -MAX_VEL) {
