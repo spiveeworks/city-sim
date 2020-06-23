@@ -3,6 +3,7 @@
 #include "time.h"
 
 int frame = 0;
+time_t start_time;
 
 typedef int64_t num;
 #define UNIT_CTIME (1ull << 16)
@@ -146,13 +147,14 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 		float c;
 		float r, g, b;
 		const bool dev_colors = true;
+		const bool chunk_colors = false;
 		if (dev_colors) {
 			size_t ci = get_chunk(chars[i].x);
 			size_t cj = get_chunk(chars[i].y);
-			if ((ci + cj)%2) {
-				c = 0.0f;
-			} else {
+			if (chunk_colors && (ci + cj)%2) {
 				c = 3.0f;
+			} else {
+				c = 0.0f;
 			}
 			if (i == 0) {
 				c = 1.0f;
@@ -208,7 +210,7 @@ void recordResize(GLFWwindow *window, int width, int height) {
 }
 
 int main() {
-	srand(time(NULL));
+	srand(time(&start_time));
 	struct GraphicsInstance gi = createGraphicsInstance();
 	struct Graphics g = createGraphics(&gi);
 
@@ -223,7 +225,7 @@ int main() {
 
 		frame++;
 		if (frame % 300 == 0) {
-			printf("reached frame %d (%d seconds)\n", frame, frame/60);
+			printf("reached frame %d (%d seconds)\n", frame, time(NULL)-start_time);
 			init();
 		}
 
