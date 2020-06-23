@@ -5,59 +5,133 @@
 int frame = 0;
 
 typedef int64_t num;
-const num UNIT = 1ull << 16;
+#define UNIT_CTIME (1ull << 16)
+const num UNIT = UNIT_CTIME;
 
-const num DIM = (1ull << 16) * 100;
+#define IDIM 128
+#define DIM_CTIME (UNIT_CTIME * IDIM)
+const num DIM = DIM_CTIME;
 
-#define CHAR_NUM 1000
+#define CHAR_NUM (IDIM * IDIM / 4)
 
 struct Char {
 	num x, y;
 } chars[CHAR_NUM];
 
-#define rand_int(g) ((rand() % (2*(g)+1))-(g))
+struct CharRef {
+	long i;
+};
+
+#define AWARENESS (UNIT_CTIME * 10)
+
+#define CHUNK_SIZE AWARENESS
+#define CHUNK_DIM (2 * DIM_CTIME / CHUNK_SIZE + 1)
+#define CHUNK_DEPTH 25
+struct Chunk {
+	struct CharRef chars[CHUNK_DEPTH];
+} chunks[CHUNK_DIM][CHUNK_DIM];
+
+#define get_chunk(x) (((x)+DIM)/CHUNK_SIZE)
+
+void chunk_remove_char(long i) {
+	struct Char c = chars[i];
+	size_t ci = get_chunk(c.x), cj = get_chunk(c.y);
+	range (k, CHUNK_DEPTH) {
+		if (chunks[ci][cj].chars[k].i == i) {
+			chunks[ci][cj].chars[k].i = -1;
+			return;
+		}
+	}
+	printf("WARNING: char %ld not removed from chunk %lu, %lu\n", i, ci, cj);
+}
+
+int high_water = 0;
+
+void chunk_add_char(long i) {
+	struct Char c = chars[i];
+	size_t ci = get_chunk(c.x), cj = get_chunk(c.y);
+	range (k, CHUNK_DEPTH) {
+		if (chunks[ci][cj].chars[k].i == -1) {
+			chunks[ci][cj].chars[k].i = i;
+			if (k > high_water) {
+				high_water = k;
+			}
+			return;
+		}
+	}
+	printf("ERROR: chunk %lu, %lu is full\n", ci, cj);
+	exit(1);
+}
 
 void init() {
+	range (i, CHUNK_DIM) {
+		range (j, CHUNK_DIM) {
+			range(k, CHUNK_DEPTH) {
+				chunks[i][j].chars[k].i = -1;
+			}
+		}
+	}
 	range (i, CHAR_NUM) {
 		const int g = 1000; // granularity of randomness
 		const num RANGE = DIM * 7 / 8;
 		chars[i].x = rand_int(g) * RANGE / g;
 		chars[i].y = rand_int(g) * RANGE / g;
+		chunk_add_char(i);
 	}
+	printf("Spread %d characters across %d chunks, highest was %d in one chunk\n", CHAR_NUM, CHUNK_DIM*CHUNK_DIM, high_water);
 }
 
 void simulate() {
-	for (size_t i = 1; i < CHAR_NUM; i++) {
-		range (j, i-1) {
-			num dx = chars[i].x - chars[j].x;
-			num dy = chars[i].y - chars[j].y;
-			num qu = dx*dx+dy*dy;
-			if (qu != 0 && qu < UNIT*UNIT*100) {
-				const num C = 10000*UNIT;
-				chars[i].x += C*dx / qu;
-				chars[i].y += C*dy / qu;
-				chars[j].x -= C*dx / qu;
-				chars[j].y -= C*dy / qu;
+	range (i, CHAR_NUM) {
+		num vx = 0, vy = 0;
+		const size_t ci = get_chunk(chars[i].x);
+		const size_t cj = get_chunk(chars[i].y);
+
+		const size_t cl = max(1, ci)-1;
+		const size_t cr = min(CHUNK_DIM-1, ci+1);
+		const size_t cu = max(1, cj)-1;
+		const size_t cd = min(CHUNK_DIM-1, cj+1);
+		for (int di = cl; di <= cr; di++) {
+			for (int dj = cu; dj <= cd; dj++) {
+				struct Chunk *chunk = &chunks[di][dj];
+				range(k, CHUNK_DEPTH) {
+					if (chunk->chars[k].i == -1) continue;
+					size_t j = chunk->chars[k].i;
+					if (i == j) continue;
+					num dx = chars[i].x - chars[j].x;
+					num dy = chars[i].y - chars[j].y;
+					num qu = dx*dx+dy*dy;
+					if (qu != 0 && qu < AWARENESS * AWARENESS) {
+						const num C = 10000*UNIT;
+						vx += C*dx/qu;
+						vy += C*dy/qu;
+					}
+				}
 			}
 		}
-	}
-	range (i, CHAR_NUM) {
+		{
 		const num C = 5000*UNIT;
-		chars[i].x += C/(chars[i].x-DIM);
-		chars[i].x += C/(chars[i].x+DIM);
-		chars[i].y += C/(chars[i].y-DIM);
-		chars[i].y += C/(chars[i].y+DIM);
-	}
-	range (i, CHAR_NUM) {
-		if (chars[i].x > DIM) {
-			chars[i].x = DIM;
-		} else if (chars[i].x < -DIM) {
-			chars[i].x = -DIM;
+			vx += C/(chars[i].x-DIM);
+			vx += C/(chars[i].x+DIM);
+			vy += C/(chars[i].y-DIM);
+			vy += C/(chars[i].y+DIM);
 		}
-		if (chars[i].y > DIM) {
-			chars[i].y = DIM;
-		} else if (chars[i].y < -DIM) {
-			chars[i].y = -DIM;
+
+		{
+			chunk_remove_char(i);
+			chars[i].x += vx;
+			chars[i].y += vy;
+			if (chars[i].x > DIM) {
+				chars[i].x = DIM-1;
+			} else if (chars[i].x < -DIM) {
+				chars[i].x = 1-DIM;
+			}
+			if (chars[i].y > DIM) {
+				chars[i].y = DIM-1;
+			} else if (chars[i].y < -DIM) {
+				chars[i].y = 1-DIM;
+			}
+			chunk_add_char(i);
 		}
 	}
 }
@@ -71,18 +145,29 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 
 		float c = (float)i*6.0f / (float)CHAR_NUM;
 		float r, g, b;
-		if (c < 1.0f) {
-			r = 1.0f, g = c, b = 0.0f;
-		} else if (c < 2.0f) {
-			r = 2.0f-c, g = 1.0f, b = 0.0f;
-		} else if (c < 3.0f) {
-			r = 0.0f, g = 1.0f, b = c-2.0f;
-		} else if (c < 4.0f) {
-			r = 0.0f, g = 4.0f-c, b = 1.0f;
-		} else if (c < 5.0f) {
-			r = c-4.0f, g = 0.0f, b = 1.0f;
+		const bool color_chunks = true;
+		if (color_chunks) {
+			size_t ci = get_chunk(chars[i].x);
+			size_t cj = get_chunk(chars[i].y);
+			if ((ci + cj)%2) {
+				r = 1.0f, g = 0.0f, b = 0.0f;
+			} else {
+				r = 0.0f, g = 1.0f, b = 1.0f;
+			}
 		} else {
-			r = 1.0f, g = 0.0f, b = 6.0f-c;
+			if (c < 1.0f) {
+				r = 1.0f, g = c, b = 0.0f;
+			} else if (c < 2.0f) {
+				r = 2.0f-c, g = 1.0f, b = 0.0f;
+			} else if (c < 3.0f) {
+				r = 0.0f, g = 1.0f, b = c-2.0f;
+			} else if (c < 4.0f) {
+				r = 0.0f, g = 4.0f-c, b = 1.0f;
+			} else if (c < 5.0f) {
+				r = c-4.0f, g = 0.0f, b = 1.0f;
+			} else {
+				r = 1.0f, g = 0.0f, b = 6.0f-c;
+			}
 		}
 
 		struct Vertex vs[2][2] =

@@ -7,3 +7,8 @@
 
 #define range(i, max) for (size_t i = 0; (i) < (max); ++(i))
 
+#define rand_int(g) ((rand() % (2*(g)+1))-(g))
+
+#define min(x, y) ((x) <= (y) ? (x) : (y))
+#define max(x, y) ((x) >= (y) ? (x) : (y))
+
