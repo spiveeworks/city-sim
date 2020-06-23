@@ -13,11 +13,13 @@ const num UNIT = UNIT_CTIME;
 #define DIM_CTIME (UNIT_CTIME * IDIM)
 const num DIM = DIM_CTIME;
 
-#define CHAR_NUM (IDIM * IDIM / 4)
+#define CHAR_NUM (IDIM * IDIM / 8)
 
 struct Char {
 	num x, y;
 } chars[CHAR_NUM];
+
+int stationary = 0;
 
 struct CharRef {
 	long i;
@@ -83,7 +85,7 @@ void init() {
 }
 
 void simulate() {
-	range (i, CHAR_NUM) {
+	for (size_t i = stationary; i < CHAR_NUM; i++) {
 		num vx = 0, vy = 0;
 		const size_t ci = get_chunk(chars[i].x);
 		const size_t cj = get_chunk(chars[i].y);
@@ -146,28 +148,10 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 
 		float c;
 		float r, g, b;
-		const bool dev_colors = true;
-		const bool chunk_colors = false;
-		if (dev_colors) {
-			size_t ci = get_chunk(chars[i].x);
-			size_t cj = get_chunk(chars[i].y);
-			if (chunk_colors && (ci + cj)%2) {
-				c = 3.0f;
-			} else {
-				c = 0.0f;
-			}
-			if (i == 0) {
-				c = 1.0f;
-			} else {
-				num dx = chars[i].x - chars[0].x;
-				num dy = chars[i].y - chars[0].y;
-				num qu = dx*dx+dy*dy;
-				if (qu < AWARENESS*AWARENESS) {
-					c += 2.0f;
-				}
-			}
+		if (i < stationary) {
+			c = 1.0f;
 		} else {
-			c = (float)i*6.0f / (float)CHAR_NUM;
+			c = 0.0f;
 		}
 		if (c < 1.0f) {
 			r = 1.0f, g = c, b = 0.0f;
@@ -224,7 +208,8 @@ int main() {
 		glfwPollEvents();
 
 		frame++;
-		if (frame % 300 == 0) {
+		stationary = frame % (CHAR_NUM + 60);
+		if (stationary == 0) {
 			printf("reached frame %d (%d seconds)\n", frame, time(NULL)-start_time);
 			init();
 		}
