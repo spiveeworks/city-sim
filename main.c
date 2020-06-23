@@ -22,7 +22,7 @@ struct CharRef {
 	long i;
 };
 
-#define AWARENESS (UNIT_CTIME * 10)
+#define AWARENESS (UNIT_CTIME * 8)
 
 #define CHUNK_SIZE AWARENESS
 #define CHUNK_DIM (2 * DIM_CTIME / CHUNK_SIZE + 1)
@@ -102,7 +102,7 @@ void simulate() {
 					num dy = chars[i].y - chars[j].y;
 					num qu = dx*dx+dy*dy;
 					if (qu != 0 && qu < AWARENESS * AWARENESS) {
-						const num C = 10000*UNIT;
+						const num C = 50000*UNIT;
 						vx += C*dx/qu;
 						vy += C*dy/qu;
 					}
@@ -110,7 +110,7 @@ void simulate() {
 			}
 		}
 		{
-		const num C = 5000*UNIT;
+		const num C = 10000*UNIT;
 			vx += C/(chars[i].x-DIM);
 			vx += C/(chars[i].x+DIM);
 			vy += C/(chars[i].y-DIM);
@@ -121,15 +121,15 @@ void simulate() {
 			chunk_remove_char(i);
 			chars[i].x += vx;
 			chars[i].y += vy;
-			if (chars[i].x > DIM) {
+			if (chars[i].x >= DIM) {
 				chars[i].x = DIM-1;
-			} else if (chars[i].x < -DIM) {
-				chars[i].x = 1-DIM;
+			} else if (chars[i].x <= -DIM) {
+				chars[i].x = -DIM+1;
 			}
-			if (chars[i].y > DIM) {
+			if (chars[i].y >= DIM) {
 				chars[i].y = DIM-1;
-			} else if (chars[i].y < -DIM) {
-				chars[i].y = 1-DIM;
+			} else if (chars[i].y <= -DIM) {
+				chars[i].y = -DIM+1;
 			}
 			chunk_add_char(i);
 		}
@@ -143,31 +143,42 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 		float x = (float)chars[i].x / (float)DIM;
 		float y = (float)chars[i].y / (float)DIM;
 
-		float c = (float)i*6.0f / (float)CHAR_NUM;
+		float c;
 		float r, g, b;
-		const bool color_chunks = true;
-		if (color_chunks) {
+		const bool dev_colors = true;
+		if (dev_colors) {
 			size_t ci = get_chunk(chars[i].x);
 			size_t cj = get_chunk(chars[i].y);
 			if ((ci + cj)%2) {
-				r = 1.0f, g = 0.0f, b = 0.0f;
+				c = 0.0f;
 			} else {
-				r = 0.0f, g = 1.0f, b = 1.0f;
+				c = 3.0f;
+			}
+			if (i == 0) {
+				c = 1.0f;
+			} else {
+				num dx = chars[i].x - chars[0].x;
+				num dy = chars[i].y - chars[0].y;
+				num qu = dx*dx+dy*dy;
+				if (qu < AWARENESS*AWARENESS) {
+					c += 2.0f;
+				}
 			}
 		} else {
-			if (c < 1.0f) {
-				r = 1.0f, g = c, b = 0.0f;
-			} else if (c < 2.0f) {
-				r = 2.0f-c, g = 1.0f, b = 0.0f;
-			} else if (c < 3.0f) {
-				r = 0.0f, g = 1.0f, b = c-2.0f;
-			} else if (c < 4.0f) {
-				r = 0.0f, g = 4.0f-c, b = 1.0f;
-			} else if (c < 5.0f) {
-				r = c-4.0f, g = 0.0f, b = 1.0f;
-			} else {
-				r = 1.0f, g = 0.0f, b = 6.0f-c;
-			}
+			c = (float)i*6.0f / (float)CHAR_NUM;
+		}
+		if (c < 1.0f) {
+			r = 1.0f, g = c, b = 0.0f;
+		} else if (c < 2.0f) {
+			r = 2.0f-c, g = 1.0f, b = 0.0f;
+		} else if (c < 3.0f) {
+			r = 0.0f, g = 1.0f, b = c-2.0f;
+		} else if (c < 4.0f) {
+			r = 0.0f, g = 4.0f-c, b = 1.0f;
+		} else if (c < 5.0f) {
+			r = c-4.0f, g = 0.0f, b = 1.0f;
+		} else {
+			r = 1.0f, g = 0.0f, b = 6.0f-c;
 		}
 
 		struct Vertex vs[2][2] =
@@ -213,6 +224,7 @@ int main() {
 		frame++;
 		if (frame % 300 == 0) {
 			printf("reached frame %d (%d seconds)\n", frame, frame/60);
+			init();
 		}
 
 		simulate();
