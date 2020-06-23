@@ -13,13 +13,14 @@ const num UNIT = UNIT_CTIME;
 #define DIM_CTIME (UNIT_CTIME * IDIM)
 const num DIM = DIM_CTIME;
 
-#define CHAR_NUM (IDIM * IDIM / 8)
+#define CHAR_NUM (IDIM * IDIM / 4)
 
 struct Char {
 	num x, y;
 } chars[CHAR_NUM];
 
-int stationary = 0;
+int random_walking = 20;
+int stationary = 60;
 
 struct CharRef {
 	long i;
@@ -29,7 +30,7 @@ struct CharRef {
 
 #define CHUNK_SIZE AWARENESS
 #define CHUNK_DIM (2 * DIM_CTIME / CHUNK_SIZE + 1)
-#define CHUNK_DEPTH 25
+#define CHUNK_DEPTH 20
 struct Chunk {
 	struct CharRef chars[CHUNK_DEPTH];
 } chunks[CHUNK_DIM][CHUNK_DIM];
@@ -86,6 +87,31 @@ void init() {
 
 void simulate() {
 	for (size_t i = stationary; i < CHAR_NUM; i++) {
+		/* consider the density function:
+		 * exp(-dx^2-dy^2)
+		 *   where dx = chars[i].x - chars[j].x
+		 *         dy = chars[i].y - chars[j].y
+		 *
+		 * This is the chance of char[j] getting near char[i] by random walk
+		 * after some amount of time, and by summing over all j we can
+		 * represent the chance of any other character reaching char[i] after
+		 * that amount of time.
+		 *
+		 * The direction of increasing density is given by calculus:
+		 * dir_x = -2*dx*exp(-dx^2-dy^2)
+		 * dir_y = -2*dy*exp(-dx^2-dy^2)
+		 * negating again gives the direction of decreasing density, by moving
+		 * away from char[j]
+		 *
+		 * now we can sum over these directions to get the direction in which
+		 * density decreases overall, which is exactly what we want
+		 *
+		 * also we can approximate the exp function as follows:
+		 *    exp(-dx^2-dy^2)
+		 *  = 1/exp(dx^2+dy^2)
+		 *  = 1/(exp(dx^2)exp(dy^2))
+		 * ~= 1/((1+dx^2)(1+dy^2))
+		 */
 		num vx = 0, vy = 0;
 		const size_t ci = get_chunk(chars[i].x);
 		const size_t cj = get_chunk(chars[i].y);
@@ -103,17 +129,22 @@ void simulate() {
 					if (i == j) continue;
 					num dx = chars[i].x - chars[j].x;
 					num dy = chars[i].y - chars[j].y;
-					num qu = dx*dx+dy*dy;
-					if (qu != 0 && qu < AWARENESS * AWARENESS) {
+					if ((dx*dx+dy*dy) < AWARENESS * AWARENESS) {
+						// approximately exp(dx^2+dy^2) = 1/density
+						num invdensity = (UNIT + dx*dx/UNIT)*(UNIT + dy*dy/UNIT);
 						const num C = 50000*UNIT;
-						vx += C*dx/qu;
-						vy += C*dy/qu;
+						vx += C*dx/invdensity;
+						vy += C*dy/invdensity;
 					}
 				}
 			}
 		}
+		if (i - stationary < random_walking) {
+			vx = rand_int(10)*UNIT/20;
+			vy = rand_int(10)*UNIT/20;
+		}
 		{
-		const num C = 10000*UNIT;
+			const num C = 10000*UNIT;
 			vx += C/(chars[i].x-DIM);
 			vx += C/(chars[i].x+DIM);
 			vy += C/(chars[i].y-DIM);
@@ -150,6 +181,8 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 		float r, g, b;
 		if (i < stationary) {
 			c = 1.0f;
+		} else if (i < stationary + random_walking) {
+			c = 3.0f;
 		} else {
 			c = 0.0f;
 		}
@@ -208,8 +241,9 @@ int main() {
 		glfwPollEvents();
 
 		frame++;
-		stationary = frame % (CHAR_NUM + 60);
-		if (stationary == 0) {
+		// stationary = frame % (CHAR_NUM + 60);
+		stationary = 60;
+		if (frame % 600 == 0) {
 			printf("reached frame %d (%d seconds)\n", frame, time(NULL)-start_time);
 			init();
 		}
