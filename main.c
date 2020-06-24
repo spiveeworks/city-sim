@@ -20,18 +20,15 @@ struct Char {
 	int still;
 } chars[CHAR_NUM];
 
-int random_walking = 0;
-int stationary = 0;
-
 struct CharRef {
 	long i;
 };
 
 #define AWARENESS (UNIT_CTIME * 8)
-#define WIGGLE_SCALE (1000*UNIT_CTIME)
-#define DISPERSION_SCALE (50000ll*UNIT_CTIME)
-#define DISPERSION_BOUNDARY (10000ll*UNIT_CTIME)
-#define DISPERSION_DEADZONE (UNIT_CTIME/50)
+#define WIGGLE_SCALE (UNIT_CTIME/1)
+#define DISPERSION_SCALE (100000ll*UNIT_CTIME)
+#define DISPERSION_BOUNDARY (100000ll*UNIT_CTIME)
+#define DISPERSION_DEADZONE (UNIT_CTIME/10)
 
 #define CHUNK_SIZE AWARENESS
 #define CHUNK_DIM (2 * DIM_CTIME / CHUNK_SIZE + 1)
@@ -92,7 +89,7 @@ void init() {
 }
 
 void simulate() {
-	for (size_t i = stationary; i < CHAR_NUM; i++) {
+	range (i, CHAR_NUM) {
 		/* consider the density function:
 		 * exp(-dx^2-dy^2)
 		 *   where dx = chars[i].x - chars[j].x
@@ -145,9 +142,9 @@ void simulate() {
 				}
 			}
 		}
-		if (CHAR_NUM-i <= random_walking) {
-			vx = rand_int(10)*WIGGLE_SCALE/10*chars[i].still/frame;
-			vy = rand_int(10)*WIGGLE_SCALE/10*chars[i].still/frame;
+		{
+			vx += rand_int(10)*WIGGLE_SCALE/10*chars[i].still/frame;
+			vy += rand_int(10)*WIGGLE_SCALE/10*chars[i].still/frame;
 		}
 		{
 			vx += DISPERSION_BOUNDARY/(chars[i].x-DIM);
@@ -156,8 +153,8 @@ void simulate() {
 			vy += DISPERSION_BOUNDARY/(chars[i].y+DIM);
 		}
 
-		vx = vx * (10 + frame - chars[i].still) / frame;
-		vy = vy * (10 + frame - chars[i].still) / frame;
+		vx = vx * (frame - chars[i].still) / frame*chars[i].still/frame;
+		vy = vy * (frame - chars[i].still) / frame*chars[i].still/frame;
 		num vqu = vx*vx+vy*vy;
 		num dz = DISPERSION_DEADZONE;
 		if (vqu > dz * dz) {
@@ -190,13 +187,7 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 
 		float c;
 		float r, g, b;
-		if (i < stationary) {
-			c = 5.0f;
-		} else if (CHAR_NUM-i <= random_walking) {
-			c = 0.0f;
-		} else {
-			c = (float)chars[i].still/(float)frame * 5.5f;
-		}
+		c = (float)chars[i].still/(float)frame * 5.5f;
 		if (c < 1.0f) {
 			r = 1.0f, g = c, b = 0.0f;
 		} else if (c < 2.0f) {
@@ -252,8 +243,7 @@ int main() {
 		glfwPollEvents();
 
 		frame++;
-		//stationary = frame % (CHAR_NUM + 60);
-		if (1+stationary == 0) {
+		if (1 == 0) {
 			printf("reached frame %d (%d seconds)\n", frame, time(NULL)-start_time);
 			init();
 		}
