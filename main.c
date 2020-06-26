@@ -6,7 +6,7 @@ int frame = 0;
 time_t start_time;
 
 typedef int64_t num;
-#define UNIT_CTIME (1ll << 16)
+#define UNIT_CTIME (1ull << 16)
 const num UNIT = UNIT_CTIME;
 
 #define IDIM 128
@@ -17,18 +17,16 @@ const num DIM = DIM_CTIME;
 
 struct Char {
 	num x, y;
-	int still;
 } chars[CHAR_NUM];
+
+int random_walking = 20;
+int stationary = 60;
 
 struct CharRef {
 	long i;
 };
 
 #define AWARENESS (UNIT_CTIME * 8)
-#define WIGGLE_SCALE (UNIT_CTIME/1)
-#define DISPERSION_SCALE (100000ll*UNIT_CTIME)
-#define DISPERSION_BOUNDARY (100000ll*UNIT_CTIME)
-#define DISPERSION_DEADZONE (UNIT_CTIME/10)
 
 #define CHUNK_SIZE AWARENESS
 #define CHUNK_DIM (2 * DIM_CTIME / CHUNK_SIZE + 1)
@@ -82,14 +80,13 @@ void init() {
 		const num RANGE = DIM * 7 / 8;
 		chars[i].x = rand_int(g) * RANGE / g;
 		chars[i].y = rand_int(g) * RANGE / g;
-		chars[i].still = 0;
 		chunk_add_char(i);
 	}
 	printf("Spread %d characters across %d chunks, highest was %d in one chunk\n", CHAR_NUM, CHUNK_DIM*CHUNK_DIM, high_water);
 }
 
 void simulate() {
-	range (i, CHAR_NUM) {
+	for (size_t i = stationary; i < CHAR_NUM; i++) {
 		/* consider the density function:
 		 * exp(-dx^2-dy^2)
 		 *   where dx = chars[i].x - chars[j].x
@@ -134,30 +131,27 @@ void simulate() {
 					num dy = chars[i].y - chars[j].y;
 					if ((dx*dx+dy*dy) < AWARENESS * AWARENESS) {
 						// approximately exp(dx^2+dy^2) = 1/density
-						num C = DISPERSION_SCALE;
 						num invdensity = (UNIT + dx*dx/UNIT)*(UNIT + dy*dy/UNIT);
+						const num C = 50000*UNIT;
 						vx += C*dx/invdensity;
 						vy += C*dy/invdensity;
 					}
 				}
 			}
 		}
-		{
-			vx += rand_int(10)*WIGGLE_SCALE/10*chars[i].still/frame;
-			vy += rand_int(10)*WIGGLE_SCALE/10*chars[i].still/frame;
+		if (i - stationary < random_walking) {
+			vx = rand_int(10)*UNIT/20;
+			vy = rand_int(10)*UNIT/20;
 		}
 		{
-			vx += DISPERSION_BOUNDARY/(chars[i].x-DIM);
-			vx += DISPERSION_BOUNDARY/(chars[i].x+DIM);
-			vy += DISPERSION_BOUNDARY/(chars[i].y-DIM);
-			vy += DISPERSION_BOUNDARY/(chars[i].y+DIM);
+			const num C = 10000*UNIT;
+			vx += C/(chars[i].x-DIM);
+			vx += C/(chars[i].x+DIM);
+			vy += C/(chars[i].y-DIM);
+			vy += C/(chars[i].y+DIM);
 		}
 
-		vx = vx * (frame - chars[i].still) / frame*chars[i].still/frame;
-		vy = vy * (frame - chars[i].still) / frame*chars[i].still/frame;
-		num vqu = vx*vx+vy*vy;
-		num dz = DISPERSION_DEADZONE;
-		if (vqu > dz * dz) {
+		{
 			chunk_remove_char(i);
 			chars[i].x += vx;
 			chars[i].y += vy;
@@ -172,8 +166,6 @@ void simulate() {
 				chars[i].y = -DIM+1;
 			}
 			chunk_add_char(i);
-		} else {
-			chars[i].still++;
 		}
 	}
 }
@@ -187,7 +179,13 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 
 		float c;
 		float r, g, b;
-		c = (float)chars[i].still/(float)frame * 5.5f;
+		if (i < stationary) {
+			c = 1.0f;
+		} else if (i < stationary + random_walking) {
+			c = 3.0f;
+		} else {
+			c = 0.0f;
+		}
 		if (c < 1.0f) {
 			r = 1.0f, g = c, b = 0.0f;
 		} else if (c < 2.0f) {
@@ -243,7 +241,9 @@ int main() {
 		glfwPollEvents();
 
 		frame++;
-		if (1 == 0) {
+		// stationary = frame % (CHAR_NUM + 60);
+		stationary = 60;
+		if (frame % 600 == 0) {
 			printf("reached frame %d (%d seconds)\n", frame, time(NULL)-start_time);
 			init();
 		}
