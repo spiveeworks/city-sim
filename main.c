@@ -9,7 +9,26 @@ typedef int64_t num;
 #define UNIT_CTIME (1ull << 16)
 const num UNIT = UNIT_CTIME;
 
-#define IDIM 128
+// Newton-Raphson method of calculating 1/sqrt(x)
+// (calling it fast invsqrt would be a lie while I have a while loop)
+num invsqrt_nr(num x) {
+	// scale^2 ~= UNIT / 2 ~= 1/sqrt(scrapqu)
+	num y = x;
+	// @Performance count leading zeroes please
+	while (x*y/UNIT*y/UNIT > 3 * UNIT / 2) {
+		y = y * 5 / 7;
+	}
+	while (x*y/UNIT*y/UNIT < 2 * UNIT / 3) {
+		y = y * 7 / 5;
+	}
+	y = y * (UNIT * 3 / 2 - x*y/UNIT*y/UNIT/2)/UNIT;
+	y = y * (UNIT * 3 / 2 - x*y/UNIT*y/UNIT/2)/UNIT;
+	y = y * (UNIT * 3 / 2 - x*y/UNIT*y/UNIT/2)/UNIT;
+	return y;
+}
+
+// @Robustness why do large IDIM values cause a segfault?
+#define IDIM 300
 #define DIM_CTIME (UNIT_CTIME * IDIM)
 const num DIM = DIM_CTIME;
 
@@ -39,6 +58,7 @@ enum FixtureType {
 struct Fixture {
 	num x, y;
 	enum FixtureType type;
+	int scrap;
 } fixtures[FIXTURE_CAP];
 
 #define CHAR_CAP (IDIM * IDIM / 4)
@@ -56,6 +76,7 @@ struct Char {
 	num x, y;
 	enum CharStrategy strat;
 	long factory;
+	long held_item;
 } chars[CHAR_CAP];
 
 // inline these things
@@ -72,6 +93,9 @@ struct CharRef {
 };
 
 #define AWARENESS (UNIT_CTIME * 32)
+#define SPREAD_CURVE (2*UNIT)
+#define SPREAD_FORCE (100000*UNIT)
+#define SPREAD_WALL (5000*UNIT)
 
 #define CHUNK_SIZE AWARENESS
 #define CHUNK_DIM (2 * DIM_CTIME / CHUNK_SIZE + 1)
@@ -199,6 +223,7 @@ void init() {
 		chars[i].y = rand_int(g) * RANGE / g;
 		chars[i].strat = STRAT_STAKE;
 		chars[i].factory = -1;
+		chars[i].held_item = -1;
 		char_num++;
 		chunk_add_char(i);
 	}
@@ -252,8 +277,11 @@ void simulate() {
 						num dy = chars[i].y - chars[j].y;
 						if ((dx*dx+dy*dy) < AWARENESS * AWARENESS) {
 							// approximately exp(dx^2+dy^2) = 1/density
-							num invdensity = (UNIT + dx*dx/UNIT)*(UNIT + dy*dy/UNIT);
-							const num C = 50000*UNIT;
+							// increasing SPREAD_CURVE changes the base from e
+							// to something smaller => larger radius of effect
+							num invdensity = (UNIT + dx*dx/SPREAD_CURVE)
+								*(UNIT + dy*dy/SPREAD_CURVE);
+							const num C = SPREAD_FORCE;
 							vx += C*dx/invdensity;
 							vy += C*dy/invdensity;
 						}
@@ -261,7 +289,7 @@ void simulate() {
 				}
 			}
 			{
-				const num C = 10000*UNIT;
+				const num C = SPREAD_WALL;
 				vx += C/(chars[i].x-DIM);
 				vx += C/(chars[i].x+DIM);
 				vy += C/(chars[i].y-DIM);
@@ -272,16 +300,79 @@ void simulate() {
 				fixtures[f].x = chars[i].x;
 				fixtures[f].y = chars[i].y;
 				fixtures[f].type = FIXTURE_FACTORY;
+				fixtures[f].scrap = 0;
 				fixture_num++;
 				chunk_add_fixture(f);
 				chars[i].strat = STRAT_GATHER;
 				chars[i].factory = f;
 			}
-		} else if (chars[i].strat == STRAT_GATHER) {
+		} else if (chars[i].strat == STRAT_GATHER && chars[i].held_item == -1) {
+			num scrapqu = AWARENESS * AWARENESS;
+			long scrapid = -1;
 			for (int di = cl; di <= cr; di++) {
 				for (int dj = cu; dj <= cd; dj++) {
+					struct Chunk *chunk = &chunks[di][dj];
+					range(k, CHUNK_DEPTH) {
+						if (chunk->items[k].i == -1) continue;
+						size_t j = chunk->items[k].i;
+						if (items[j].type != ITEM_SCRAP) continue;
+						num dx = chars[i].x - items[j].x;
+						num dy = chars[i].y - items[j].y;
+						num thisqu = dx*dx + dy*dy;
+						if (thisqu < scrapqu) {
+							scrapqu = thisqu;
+							scrapid = j;
+						}
+					}
 				}
 			}
+			if (scrapid == -1) continue;
+#define REACH (UNIT)
+			if (scrapqu > REACH * REACH) {
+				num dx = chars[i].x - items[scrapid].x;
+				num dy = chars[i].y - items[scrapid].y;
+				num scale = invsqrt_nr(scrapqu / UNIT);
+				vx = -dx * scale / UNIT/4;
+				vy = -dy * scale / UNIT/4;
+			} else {
+				chunk_remove_item(scrapid);
+				items[scrapid].held_by = i;
+				chars[i].held_item = scrapid;
+			}
+		} else if (chars[i].strat == STRAT_GATHER && chars[i].held_item != -1) {
+			long f = chars[i].factory;
+			if (f == -1) {
+				printf("ERROR char %d in gather state without factory\n", i);
+				exit(1);
+			}
+			num dx = chars[i].x - fixtures[f].x;
+			num dy = chars[i].y - fixtures[f].y;
+			num qu = dx*dx + dy*dy;
+			if (qu > REACH * REACH) {
+				num scale = invsqrt_nr(qu / UNIT);
+				vx = -dx * scale / UNIT/4;
+				vy = -dy * scale / UNIT/4;
+			} else {
+				long h = chars[i].held_item;
+				chars[i].held_item = -1;
+				items[h].held_by = -1;
+				items[h].type = ITEM_NULL;
+				long f = chars[i].factory;
+				fixtures[f].scrap += 1;
+				if (fixtures[f].scrap >= 5) {
+					fixtures[f].scrap -= 5;
+					long j = char_num;
+					chars[j].x = fixtures[f].x;
+					chars[j].y = fixtures[f].y;
+					chars[j].strat = STRAT_GATHER;
+					chars[j].factory = f;
+					chars[j].held_item = -1;
+					char_num++;
+					chunk_add_char(j);
+				}
+			}
+		} else {
+			printf("WARNING unresolved strategy %d\n", chars[i].strat);
 		}
 
 		{
@@ -367,6 +458,7 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 	size_t total = 0;
 	float dx = 0.95f/100.0f;
 	range (i, item_num) {
+		if (items[i].type == ITEM_NULL || items[i].held_by != -1) continue;
 		float x = (float)items[i].x / (float)DIM;
 		float y = (float)items[i].y / (float)DIM;
 
