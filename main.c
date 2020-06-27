@@ -13,7 +13,7 @@ const num UNIT = UNIT_CTIME;
 // (calling it fast invsqrt would be a lie while I have a while loop)
 num invsqrt_nr(num x) {
 	// scale^2 ~= UNIT / 2 ~= 1/sqrt(scrapqu)
-	num y = x;
+	num y = UNIT;
 	// @Performance count leading zeroes please
 	while (x*y/UNIT*y/UNIT > 3 * UNIT / 2) {
 		y = y * 5 / 7;
@@ -24,6 +24,9 @@ num invsqrt_nr(num x) {
 	y = y * (UNIT * 3 / 2 - x*y/UNIT*y/UNIT/2)/UNIT;
 	y = y * (UNIT * 3 / 2 - x*y/UNIT*y/UNIT/2)/UNIT;
 	y = y * (UNIT * 3 / 2 - x*y/UNIT*y/UNIT/2)/UNIT;
+	if (x*y/UNIT*y/UNIT > 3 * UNIT / 2 || x*y/UNIT*y/UNIT < 2 * UNIT / 3) {
+		printf("invsqrt(%ld) = %ld\n", x, y);
+	}
 	return y;
 }
 
@@ -31,6 +34,24 @@ num invsqrt_nr(num x) {
 #define IDIM 300
 #define DIM_CTIME (UNIT_CTIME * IDIM)
 const num DIM = DIM_CTIME;
+
+#define CHAR_CAP (IDIM * IDIM / 4)
+#define CHAR_INITIAL (IDIM * IDIM / 128)
+
+size_t char_num = 0;
+
+enum CharStrategy {
+	STRAT_NULL,
+	STRAT_STAKE,
+	STRAT_GATHER,
+};
+
+struct Char {
+	num x, y;
+	enum CharStrategy strat;
+	long factory;
+	long held_item;
+} chars[CHAR_CAP];
 
 enum ItemType {
 	ITEM_NULL,
@@ -61,37 +82,6 @@ struct Fixture {
 	int scrap;
 } fixtures[FIXTURE_CAP];
 
-#define CHAR_CAP (IDIM * IDIM / 4)
-#define CHAR_INITIAL (IDIM * IDIM / 128)
-
-size_t char_num = 0;
-
-enum CharStrategy {
-	STRAT_NULL,
-	STRAT_STAKE,
-	STRAT_GATHER,
-};
-
-struct Char {
-	num x, y;
-	enum CharStrategy strat;
-	long factory;
-	long held_item;
-} chars[CHAR_CAP];
-
-// inline these things
-struct ItemRef {
-	long i;
-};
-
-struct FixtureRef {
-	long i;
-};
-
-struct CharRef {
-	long i;
-};
-
 #define AWARENESS (UNIT_CTIME * 32)
 #define SPREAD_CURVE (2*UNIT)
 #define SPREAD_FORCE (100000*UNIT)
@@ -99,98 +89,96 @@ struct CharRef {
 
 #define CHUNK_SIZE AWARENESS
 #define CHUNK_DIM (2 * DIM_CTIME / CHUNK_SIZE + 1)
-#define CHUNK_DEPTH 50
-// @Robustness combined array for these reference things?
+#define CHUNK_BUFFER_SIZE 1024
+
+typedef uint32_t ref;
+#define REF_SHIFT 30
+const ref REF_CHAR = 1u<<REF_SHIFT;
+const ref REF_ITEM = 2u<<REF_SHIFT;
+const ref REF_FIXTURE = 3u<<REF_SHIFT;
+const ref REF_SORT = ~0u<<REF_SHIFT;
+const ref REF_IND = ~(~0u<<REF_SHIFT);
+
 struct Chunk {
-	struct ItemRef items[CHUNK_DEPTH];
-	struct FixtureRef fixtures[CHUNK_DEPTH];
-	struct CharRef chars[CHUNK_DEPTH];
+	long total_num;
+	ref refs[CHUNK_BUFFER_SIZE];
 } chunks[CHUNK_DIM][CHUNK_DIM];
 
 #define get_chunk(x) (((x)+DIM)/CHUNK_SIZE)
 
-void chunk_remove_item(long i) {
-	struct Item c = items[i];
-	size_t ci = get_chunk(c.x), cj = get_chunk(c.y);
-	range (k, CHUNK_DEPTH) {
-		if (chunks[ci][cj].items[k].i == i) {
-			chunks[ci][cj].items[k].i = -1;
-			return;
+bool chunk_remove(struct Chunk *chunk, ref r) {
+	range (i, chunk->total_num) {
+		if (chunk->refs[i] == r) {
+			chunk->total_num--;
+			chunk->refs[i] = chunk->refs[chunk->total_num];
+			chunk->refs[chunk->total_num] = 0;
+			return true;
 		}
 	}
-	printf("WARNING: item %ld not removed from chunk %lu, %lu\n", i, ci, cj);
-}
-
-void chunk_remove_fixture(long i) {
-	struct Fixture c = fixtures[i];
-	size_t ci = get_chunk(c.x), cj = get_chunk(c.y);
-	range (k, CHUNK_DEPTH) {
-		if (chunks[ci][cj].fixtures[k].i == i) {
-			chunks[ci][cj].fixtures[k].i = -1;
-			return;
-		}
-	}
-	printf("WARNING: fixture %ld not removed from chunk %lu, %lu\n", i, ci, cj);
+	return false;
 }
 
 void chunk_remove_char(long i) {
 	struct Char c = chars[i];
-	size_t ci = get_chunk(c.x), cj = get_chunk(c.y);
-	range (k, CHUNK_DEPTH) {
-		if (chunks[ci][cj].chars[k].i == i) {
-			chunks[ci][cj].chars[k].i = -1;
-			return;
-		}
+	size_t ci = get_chunk(c.x);
+	size_t cj = get_chunk(c.y);
+	if (!chunk_remove(&chunks[ci][cj], i | REF_CHAR)) {
+		printf("WARNING: char %ld not removed from chunk %lu, %lu\n", i, ci, cj);
 	}
-	printf("WARNING: char %ld not removed from chunk %lu, %lu\n", i, ci, cj);
+}
+
+void chunk_remove_item(long i) {
+	struct Item c = items[i];
+	size_t ci = get_chunk(c.x);
+	size_t cj = get_chunk(c.y);
+	if (!chunk_remove(&chunks[ci][cj], i | REF_ITEM)) {
+		printf("WARNING: item %ld not removed from chunk %lu, %lu\n", i, ci, cj);
+	}
+}
+
+void chunk_remove_fixture(long i) {
+	struct Fixture c = fixtures[i];
+	size_t ci = get_chunk(c.x);
+	size_t cj = get_chunk(c.y);
+	if (!chunk_remove(&chunks[ci][cj], i | REF_FIXTURE)) {
+		printf("WARNING: fixture %ld not removed from chunk %lu, %lu\n", i, ci, cj);
+	}
 }
 
 int high_water = 0;
 
+void chunk_add_char(long i) {
+	struct Char c = chars[i];
+	size_t ci = get_chunk(c.x), cj = get_chunk(c.y);
+	struct Chunk *chunk = &chunks[ci][cj];
+	if (chunk->total_num == CHUNK_BUFFER_SIZE) {
+		printf("ERROR: chunk %lu, %lu is full\n", ci, cj);
+		exit(1);
+	}
+	chunk->refs[chunk->total_num++] = i | REF_CHAR;
+	high_water = max(high_water, chunk->total_num);
+}
 void chunk_add_item(long i) {
 	struct Item c = items[i];
 	size_t ci = get_chunk(c.x), cj = get_chunk(c.y);
-	range (k, CHUNK_DEPTH) {
-		if (chunks[ci][cj].items[k].i == -1) {
-			chunks[ci][cj].items[k].i = i;
-			if (k > high_water) {
-				high_water = k;
-			}
-			return;
-		}
+	struct Chunk *chunk = &chunks[ci][cj];
+	if (chunk->total_num == CHUNK_BUFFER_SIZE) {
+		printf("ERROR: chunk %lu, %lu is full\n", ci, cj);
+		exit(1);
 	}
-	printf("ERROR: chunk %lu, %lu is full of items\n", ci, cj);
-	exit(1);
+	chunk->refs[chunk->total_num++] = i | REF_ITEM;
+	high_water = max(high_water, chunk->total_num);
 }
 void chunk_add_fixture(long i) {
 	struct Fixture c = fixtures[i];
 	size_t ci = get_chunk(c.x), cj = get_chunk(c.y);
-	range (k, CHUNK_DEPTH) {
-		if (chunks[ci][cj].fixtures[k].i == -1) {
-			chunks[ci][cj].fixtures[k].i = i;
-			if (k > high_water) {
-				high_water = k;
-			}
-			return;
-		}
+	struct Chunk *chunk = &chunks[ci][cj];
+	if (chunk->total_num == CHUNK_BUFFER_SIZE) {
+		printf("ERROR: chunk %lu, %lu is full\n", ci, cj);
+		exit(1);
 	}
-	printf("ERROR: chunk %lu, %lu is full of fixtures\n", ci, cj);
-	exit(1);
-}
-void chunk_add_char(long i) {
-	struct Char c = chars[i];
-	size_t ci = get_chunk(c.x), cj = get_chunk(c.y);
-	range (k, CHUNK_DEPTH) {
-		if (chunks[ci][cj].chars[k].i == -1) {
-			chunks[ci][cj].chars[k].i = i;
-			if (k > high_water) {
-				high_water = k;
-			}
-			return;
-		}
-	}
-	printf("ERROR: chunk %lu, %lu is full of chars\n", ci, cj);
-	exit(1);
+	chunk->refs[chunk->total_num++] = i | REF_FIXTURE;
+	high_water = max(high_water, chunk->total_num);
 }
 
 void init() {
@@ -199,10 +187,9 @@ void init() {
 	char_num = 0;
 	range (i, CHUNK_DIM) {
 		range (j, CHUNK_DIM) {
-			range(k, CHUNK_DEPTH) {
-				chunks[i][j].items[k].i = -1;
-				chunks[i][j].fixtures[k].i = -1;
-				chunks[i][j].chars[k].i = -1;
+			chunks[i][j].total_num = 0;
+			range(k, CHUNK_BUFFER_SIZE) {
+				chunks[i][j].refs[k] = 0;
 			}
 		}
 	}
@@ -269,9 +256,9 @@ void simulate() {
 			for (int di = cl; di <= cr; di++) {
 				for (int dj = cu; dj <= cd; dj++) {
 					struct Chunk *chunk = &chunks[di][dj];
-					range(k, CHUNK_DEPTH) {
-						if (chunk->chars[k].i == -1) continue;
-						size_t j = chunk->chars[k].i;
+					range(k, chunk->total_num) {
+						if ((chunk->refs[k] & REF_SORT) != REF_CHAR) continue;
+						size_t j = chunk->refs[k] & REF_IND;
 						if (i == j) continue;
 						num dx = chars[i].x - chars[j].x;
 						num dy = chars[i].y - chars[j].y;
@@ -312,9 +299,9 @@ void simulate() {
 			for (int di = cl; di <= cr; di++) {
 				for (int dj = cu; dj <= cd; dj++) {
 					struct Chunk *chunk = &chunks[di][dj];
-					range(k, CHUNK_DEPTH) {
-						if (chunk->items[k].i == -1) continue;
-						size_t j = chunk->items[k].i;
+					range(k, chunk->total_num) {
+						if ((chunk->refs[k] & REF_SORT) != REF_ITEM) continue;
+						size_t j = chunk->refs[k] & REF_IND;
 						if (items[j].type != ITEM_SCRAP) continue;
 						num dx = chars[i].x - items[j].x;
 						num dy = chars[i].y - items[j].y;
