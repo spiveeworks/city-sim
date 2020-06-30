@@ -12,6 +12,7 @@ const num UNIT = UNIT_CTIME;
 // Newton-Raphson method of calculating 1/sqrt(x)
 // (calling it fast invsqrt would be a lie while I have a while loop)
 num invsqrt_nr(num x) {
+	if (!x) x = 1;
 	// scale^2 ~= UNIT / 2 ~= 1/sqrt(scrapqu)
 	num y = UNIT;
 	// @Performance count leading zeroes please
@@ -38,19 +39,25 @@ const num DIM = DIM_CTIME;
 #define CHAR_CAP (IDIM * IDIM / 4)
 #define CHAR_INITIAL (IDIM * IDIM / 128)
 
+#define REACH (UNIT)
+#define MAX_HEALTH 60
+
 size_t char_num = 0;
 
 enum CharStrategy {
 	STRAT_NULL,
 	STRAT_STAKE,
-	STRAT_GATHER,
+	STRAT_HUNT_LEAD,
+	STRAT_HUNT_FOLLOW,
 };
 
 struct Char {
 	num x, y;
 	enum CharStrategy strat;
-	long factory;
-	long held_item;
+	long team;
+	long leader;
+	int health;
+	// long held_item;
 } chars[CHAR_CAP];
 
 enum ItemType {
@@ -193,7 +200,7 @@ void init() {
 			}
 		}
 	}
-	range (i, ITEM_CAP) {
+	range (i, 0) {
 		const int g = 1000; // granularity of randomness
 		const num RANGE = DIM - 1;
 		items[i].x = rand_int(g) * RANGE / g;
@@ -208,9 +215,11 @@ void init() {
 		const num RANGE = DIM * 7 / 8;
 		chars[i].x = rand_int(g) * RANGE / g;
 		chars[i].y = rand_int(g) * RANGE / g;
-		chars[i].strat = STRAT_STAKE;
-		chars[i].factory = -1;
-		chars[i].held_item = -1;
+		chars[i].strat = STRAT_HUNT_LEAD;
+		chars[i].team = i;
+		chars[i].leader = -1;
+		chars[i].health = MAX_HEALTH;
+		// chars[i].held_item = -1;
 		char_num++;
 		chunk_add_char(i);
 	}
@@ -219,31 +228,6 @@ void init() {
 
 void simulate() {
 	range (i, char_num) {
-		/* consider the density function:
-		 * exp(-dx^2-dy^2)
-		 *   where dx = chars[i].x - chars[j].x
-		 *         dy = chars[i].y - chars[j].y
-		 *
-		 * This is the chance of char[j] getting near char[i] by random walk
-		 * after some amount of time, and by summing over all j we can
-		 * represent the chance of any other character reaching char[i] after
-		 * that amount of time.
-		 *
-		 * The direction of increasing density is given by calculus:
-		 * dir_x = -2*dx*exp(-dx^2-dy^2)
-		 * dir_y = -2*dy*exp(-dx^2-dy^2)
-		 * negating again gives the direction of decreasing density, by moving
-		 * away from char[j]
-		 *
-		 * now we can sum over these directions to get the direction in which
-		 * density decreases overall, which is exactly what we want
-		 *
-		 * also we can approximate the exp function as follows:
-		 *    exp(-dx^2-dy^2)
-		 *  = 1/exp(dx^2+dy^2)
-		 *  = 1/(exp(dx^2)exp(dy^2))
-		 * ~= 1/((1+dx^2)(1+dy^2))
-		 */
 		num vx = 0, vy = 0;
 		const size_t ci = get_chunk(chars[i].x);
 		const size_t cj = get_chunk(chars[i].y);
@@ -290,74 +274,53 @@ void simulate() {
 				fixtures[f].scrap = 0;
 				fixture_num++;
 				chunk_add_fixture(f);
-				chars[i].strat = STRAT_GATHER;
-				chars[i].factory = f;
+				chars[i].strat = STRAT_NULL;
+				// chars[i].factory = f;
 			}
-		} else if (chars[i].strat == STRAT_GATHER && chars[i].held_item == -1) {
-			num scrapqu = AWARENESS * AWARENESS;
-			long scrapid = -1;
+		} else if (chars[i].strat == STRAT_HUNT_LEAD) {
+			long nearest = -1;
+			long nearestqu = AWARENESS * AWARENESS;
+			num nearestdx, nearestdy;
 			for (int di = cl; di <= cr; di++) {
 				for (int dj = cu; dj <= cd; dj++) {
 					struct Chunk *chunk = &chunks[di][dj];
 					range(k, chunk->total_num) {
-						if ((chunk->refs[k] & REF_SORT) != REF_ITEM) continue;
+						if ((chunk->refs[k] & REF_SORT) != REF_CHAR) continue;
 						size_t j = chunk->refs[k] & REF_IND;
-						if (items[j].type != ITEM_SCRAP) continue;
-						num dx = chars[i].x - items[j].x;
-						num dy = chars[i].y - items[j].y;
-						num thisqu = dx*dx + dy*dy;
-						if (thisqu < scrapqu) {
-							scrapqu = thisqu;
-							scrapid = j;
+						if (chars[i].team == chars[j].team) continue;
+						num dx = chars[j].x - chars[i].x;
+						num dy = chars[j].y - chars[i].y;
+						num qu = dx*dx + dy*dy;
+						if (qu < nearestqu) {
+							nearest = j;
+							nearestqu = qu;
+							nearestdx = dx;
+							nearestdy = dy;
 						}
 					}
 				}
 			}
-			if (scrapid == -1) continue;
-#define REACH (UNIT)
-			if (scrapqu > REACH * REACH) {
-				num dx = chars[i].x - items[scrapid].x;
-				num dy = chars[i].y - items[scrapid].y;
-				num scale = invsqrt_nr(scrapqu / UNIT);
-				vx = -dx * scale / UNIT/4;
-				vy = -dy * scale / UNIT/4;
-			} else {
-				chunk_remove_item(scrapid);
-				items[scrapid].held_by = i;
-				chars[i].held_item = scrapid;
-			}
-		} else if (chars[i].strat == STRAT_GATHER && chars[i].held_item != -1) {
-			long f = chars[i].factory;
-			if (f == -1) {
-				printf("ERROR char %d in gather state without factory\n", i);
-				exit(1);
-			}
-			num dx = chars[i].x - fixtures[f].x;
-			num dy = chars[i].y - fixtures[f].y;
-			num qu = dx*dx + dy*dy;
-			if (qu > REACH * REACH) {
-				num scale = invsqrt_nr(qu / UNIT);
-				vx = -dx * scale / UNIT/4;
-				vy = -dy * scale / UNIT/4;
-			} else {
-				long h = chars[i].held_item;
-				chars[i].held_item = -1;
-				items[h].held_by = -1;
-				items[h].type = ITEM_NULL;
-				long f = chars[i].factory;
-				fixtures[f].scrap += 1;
-				if (fixtures[f].scrap >= 5) {
-					fixtures[f].scrap -= 5;
-					long j = char_num;
-					chars[j].x = fixtures[f].x;
-					chars[j].y = fixtures[f].y;
-					chars[j].strat = STRAT_GATHER;
-					chars[j].factory = f;
-					chars[j].held_item = -1;
-					char_num++;
-					chunk_add_char(j);
+			if (nearest == -1) {
+				num x = chars[i].x;
+				num y = chars[i].y;
+				num scale = invsqrt_nr((x*x+y*y)/UNIT);
+				vx = -x*scale/UNIT/4;
+				vy = -y*scale/UNIT/4;
+			} else if (nearestqu < 64*REACH * REACH) {
+				chars[nearest].health--;
+				if (chars[nearest].health <= 0) {
+					chars[nearest].health = MAX_HEALTH;
+					// chars[nearest].strat = STRAT_HUNT_FOLLOW;
+					chars[nearest].team = chars[i].team;
+					chars[nearest].leader =
+						chars[i].leader == -1 ? i : chars[i].leader;
 				}
+			} else {
+				num scale = invsqrt_nr(nearestqu/UNIT);
+				vx = nearestdx * scale / UNIT / 4;
+				vy = nearestdy * scale / UNIT / 4;
 			}
+		} else if (chars[i].strat == STRAT_HUNT_FOLLOW) {
 		} else {
 			printf("WARNING unresolved strategy %d\n", chars[i].strat);
 		}
@@ -461,8 +424,15 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 		float x = (float)chars[i].x / (float)DIM;
 		float y = (float)chars[i].y / (float)DIM;
 
-		float col[3];
-		bright(chars[i].strat-1, col);
+		float col[3] = {0.5f, 0.5f, 0.5f};
+		if (chars[i].team != -1) {
+			bright((float)(chars[i].team % 12)*0.5f, col);
+			if (chars[i].team / 12 % 2) {
+				col[0] *= 0.5f;
+				col[1] *= 0.5f;
+				col[2] *= 0.5f;
+			}
+		}
 
 		circle(vertex_data, &total, x, y, dx, col[0], col[1], col[2]);
 	}
