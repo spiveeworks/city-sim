@@ -39,24 +39,27 @@ const num DIM = DIM_CTIME;
 #define CHAR_CAP (IDIM * IDIM / 4)
 #define CHAR_INITIAL (IDIM * IDIM / 128)
 
+#define STARTING_TEAM_SIZE 10
+
 #define REACH (UNIT)
 #define MAX_HEALTH 60
 
 size_t char_num = 0;
 
 enum CharStrategy {
-	STRAT_NULL,
+	STRAT_DEAD,
 	STRAT_STAKE,
-	STRAT_HUNT_LEAD,
-	STRAT_HUNT_FOLLOW,
+	STRAT_FORM_LEAD,
+	STRAT_FORM_FOLLOW,
+	STRAT_HUNT,
 };
 
 struct Char {
 	num x, y;
 	enum CharStrategy strat;
+	int health;
 	long team;
 	long leader;
-	int health;
 	// long held_item;
 } chars[CHAR_CAP];
 
@@ -215,9 +218,9 @@ void init() {
 		const num RANGE = DIM * 7 / 8;
 		chars[i].x = rand_int(g) * RANGE / g;
 		chars[i].y = rand_int(g) * RANGE / g;
-		chars[i].strat = STRAT_HUNT_LEAD;
+		chars[i].strat = STRAT_FORM_LEAD;
 		chars[i].team = i;
-		chars[i].leader = -1;
+		chars[i].leader = 1;
 		chars[i].health = MAX_HEALTH;
 		// chars[i].held_item = -1;
 		char_num++;
@@ -236,6 +239,9 @@ void simulate() {
 		const size_t cr = min(CHUNK_DIM-1, ci+1);
 		const size_t cu = max(1, cj)-1;
 		const size_t cd = min(CHUNK_DIM-1, cj+1);
+		if (chars[i].strat == STRAT_DEAD) {
+			continue;
+		}
 		if (chars[i].strat == STRAT_STAKE) {
 			for (int di = cl; di <= cr; di++) {
 				for (int dj = cu; dj <= cd; dj++) {
@@ -274,10 +280,14 @@ void simulate() {
 				fixtures[f].scrap = 0;
 				fixture_num++;
 				chunk_add_fixture(f);
-				chars[i].strat = STRAT_NULL;
+				chars[i].strat = STRAT_DEAD;
 				// chars[i].factory = f;
 			}
-		} else if (chars[i].strat == STRAT_HUNT_LEAD) {
+		} else if (chars[i].strat == STRAT_FORM_LEAD) {
+			if (chars[i].leader >= STARTING_TEAM_SIZE) {
+				chars[i].strat = STRAT_HUNT;
+				chars[i].leader = -1;
+			}
 			long nearest = -1;
 			long nearestqu = AWARENESS * AWARENESS;
 			num nearestdx, nearestdy;
@@ -287,7 +297,76 @@ void simulate() {
 					range(k, chunk->total_num) {
 						if ((chunk->refs[k] & REF_SORT) != REF_CHAR) continue;
 						size_t j = chunk->refs[k] & REF_IND;
+						if (chars[j].strat != STRAT_FORM_LEAD
+								&& chars[j].strat != STRAT_HUNT) continue;
 						if (chars[i].team == chars[j].team) continue;
+						num dx = chars[j].x - chars[i].x;
+						num dy = chars[j].y - chars[i].y;
+						num qu = dx*dx + dy*dy;
+						if (qu < nearestqu) {
+							nearest = j;
+							nearestqu = qu;
+							nearestdx = dx;
+							nearestdy = dy;
+						}
+					}
+				}
+			}
+			if (nearest == -1) {
+				num x = chars[i].x;
+				num y = chars[i].y;
+				num scale = invsqrt_nr((x*x+y*y)/UNIT);
+				vx = -x*scale/UNIT/4;
+				vy = -y*scale/UNIT/4;
+			} else if (nearestqu < 64*REACH * REACH) {
+				if (chars[nearest].strat == STRAT_HUNT) {
+					chars[i].strat = STRAT_HUNT;
+					chars[i].leader = -1;
+					chars[i].team = chars[nearest].team;
+				} else {
+					long lead = nearest, follow = i;
+					if (chars[i].leader > chars[nearest].leader) {
+						lead = i, follow = nearest;
+					}
+					chars[lead].leader += chars[follow].leader;
+					chars[follow].strat = STRAT_FORM_FOLLOW;
+					chars[follow].leader = lead;
+					chars[follow].team = chars[lead].team;
+				}
+			} else {
+				num scale = invsqrt_nr(nearestqu/UNIT);
+				vx = nearestdx * scale / UNIT / 4;
+				vy = nearestdy * scale / UNIT / 4;
+			}
+		} else if (chars[i].strat == STRAT_FORM_FOLLOW) {
+			long j = chars[i].leader;
+			if (chars[j].strat == STRAT_FORM_LEAD) {
+				num dx = chars[j].x - chars[i].x;
+				num dy = chars[j].y - chars[i].y;
+				num qu = dx*dx + dy*dy;
+				if (qu > REACH * REACH) {
+					num scale = invsqrt_nr(qu / UNIT);
+					vx = dx * scale / UNIT / 4;
+					vy = dy * scale / UNIT / 4;
+				}
+			} else {
+				chars[i].strat = chars[j].strat;
+				chars[i].leader = chars[j].leader;
+				chars[i].team = chars[j].team;
+			}
+		} else if (chars[i].strat == STRAT_HUNT) {
+			long nearest = -1;
+			long nearestqu = AWARENESS * AWARENESS;
+			num nearestdx, nearestdy;
+			for (int di = cl; di <= cr; di++) {
+				for (int dj = cu; dj <= cd; dj++) {
+					struct Chunk *chunk = &chunks[di][dj];
+					range(k, chunk->total_num) {
+						if ((chunk->refs[k] & REF_SORT) != REF_CHAR) continue;
+						size_t j = chunk->refs[k] & REF_IND;
+						if (chars[j].team == chars[i].team) continue;
+						if (chars[j].strat == STRAT_DEAD
+								|| chars[j].health == 0) continue;
 						num dx = chars[j].x - chars[i].x;
 						num dy = chars[j].y - chars[i].y;
 						num qu = dx*dx + dy*dy;
@@ -309,18 +388,15 @@ void simulate() {
 			} else if (nearestqu < 64*REACH * REACH) {
 				chars[nearest].health--;
 				if (chars[nearest].health <= 0) {
-					chars[nearest].health = MAX_HEALTH;
-					// chars[nearest].strat = STRAT_HUNT_FOLLOW;
-					chars[nearest].team = chars[i].team;
-					chars[nearest].leader =
-						chars[i].leader == -1 ? i : chars[i].leader;
+					chars[nearest].strat = STRAT_DEAD;
+					chars[nearest].team = -1;
+					chars[nearest].leader = -1;
 				}
 			} else {
 				num scale = invsqrt_nr(nearestqu/UNIT);
 				vx = nearestdx * scale / UNIT / 4;
 				vy = nearestdy * scale / UNIT / 4;
 			}
-		} else if (chars[i].strat == STRAT_HUNT_FOLLOW) {
 		} else {
 			printf("WARNING unresolved strategy %d\n", chars[i].strat);
 		}
