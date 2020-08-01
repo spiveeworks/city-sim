@@ -46,26 +46,17 @@ const num DIM = DIM_CTIME;
 
 size_t char_num = 0;
 
-enum CharStrategy {
-	STRAT_DEAD,
-	STRAT_STAKE,
-	STRAT_FORM_LEAD,
-	STRAT_FORM_FOLLOW,
-	STRAT_HUNT,
-};
-
 struct Char {
 	num x, y;
-	enum CharStrategy strat;
-	int health;
-	long team;
-	long leader;
+	// num velx, vely;
+	int deadframe;
+	// enum CharTask task;
 	// long held_item;
 } chars[CHAR_CAP];
 
 enum ItemType {
 	ITEM_NULL,
-	ITEM_SCRAP,
+	ITEM_FOOD,
 };
 
 #define ITEM_CAP (IDIM * IDIM / 16)
@@ -74,7 +65,7 @@ size_t item_num = 0;
 
 struct Item {
 	num x, y;
-	long held_by;
+	// long held_by;
 	enum ItemType type;
 } items[ITEM_CAP];
 
@@ -89,7 +80,7 @@ enum FixtureType {
 struct Fixture {
 	num x, y;
 	enum FixtureType type;
-	int scrap;
+	int change_frame;
 } fixtures[FIXTURE_CAP];
 
 #define AWARENESS (UNIT_CTIME * 32)
@@ -203,13 +194,13 @@ void init() {
 			}
 		}
 	}
-	range (i, 0) {
+	range (i, 1000) {
 		const int g = 1000; // granularity of randomness
 		const num RANGE = DIM - 1;
 		items[i].x = rand_int(g) * RANGE / g;
 		items[i].y = rand_int(g) * RANGE / g;
-		items[i].type = ITEM_SCRAP;
-		items[i].held_by = -1;
+		items[i].type = ITEM_FOOD;
+		// items[i].held_by = -1;
 		item_num++;
 		chunk_add_item(i);
 	}
@@ -218,11 +209,7 @@ void init() {
 		const num RANGE = DIM * 7 / 8;
 		chars[i].x = rand_int(g) * RANGE / g;
 		chars[i].y = rand_int(g) * RANGE / g;
-		chars[i].strat = STRAT_FORM_LEAD;
-		chars[i].team = i;
-		chars[i].leader = 1;
-		chars[i].health = MAX_HEALTH;
-		// chars[i].held_item = -1;
+		chars[i].deadframe = 120;
 		char_num++;
 		chunk_add_char(i);
 	}
@@ -239,55 +226,7 @@ void simulate() {
 		const size_t cr = min(CHUNK_DIM-1, ci+1);
 		const size_t cu = max(1, cj)-1;
 		const size_t cd = min(CHUNK_DIM-1, cj+1);
-		if (chars[i].strat == STRAT_DEAD) {
-			continue;
-		}
-		if (chars[i].strat == STRAT_STAKE) {
-			for (int di = cl; di <= cr; di++) {
-				for (int dj = cu; dj <= cd; dj++) {
-					struct Chunk *chunk = &chunks[di][dj];
-					range(k, chunk->total_num) {
-						if ((chunk->refs[k] & REF_SORT) != REF_CHAR) continue;
-						size_t j = chunk->refs[k] & REF_IND;
-						if (i == j) continue;
-						num dx = chars[i].x - chars[j].x;
-						num dy = chars[i].y - chars[j].y;
-						if ((dx*dx+dy*dy) < AWARENESS * AWARENESS) {
-							// approximately exp(dx^2+dy^2) = 1/density
-							// increasing SPREAD_CURVE changes the base from e
-							// to something smaller => larger radius of effect
-							num invdensity = (UNIT + dx*dx/SPREAD_CURVE)
-								*(UNIT + dy*dy/SPREAD_CURVE);
-							const num C = SPREAD_FORCE;
-							vx += C*dx/invdensity;
-							vy += C*dy/invdensity;
-						}
-					}
-				}
-			}
-			{
-				const num C = SPREAD_WALL;
-				vx += C/(chars[i].x-DIM);
-				vx += C/(chars[i].x+DIM);
-				vy += C/(chars[i].y-DIM);
-				vy += C/(chars[i].y+DIM);
-			}
-			if (vx * vx + vy * vy < UNIT/100) {
-				long f = fixture_num;
-				fixtures[f].x = chars[i].x;
-				fixtures[f].y = chars[i].y;
-				fixtures[f].type = FIXTURE_FACTORY;
-				fixtures[f].scrap = 0;
-				fixture_num++;
-				chunk_add_fixture(f);
-				chars[i].strat = STRAT_DEAD;
-				// chars[i].factory = f;
-			}
-		} else if (chars[i].strat == STRAT_FORM_LEAD) {
-			if (chars[i].leader >= STARTING_TEAM_SIZE) {
-				chars[i].strat = STRAT_HUNT;
-				chars[i].leader = -1;
-			}
+		if (frame < chars[i].deadframe) {
 			long nearest = -1;
 			long nearestqu = AWARENESS * AWARENESS;
 			num nearestdx, nearestdy;
@@ -295,13 +234,11 @@ void simulate() {
 				for (int dj = cu; dj <= cd; dj++) {
 					struct Chunk *chunk = &chunks[di][dj];
 					range(k, chunk->total_num) {
-						if ((chunk->refs[k] & REF_SORT) != REF_CHAR) continue;
+						if ((chunk->refs[k] & REF_SORT) != REF_ITEM) continue;
 						size_t j = chunk->refs[k] & REF_IND;
-						if (chars[j].strat != STRAT_FORM_LEAD
-								&& chars[j].strat != STRAT_HUNT) continue;
-						if (chars[i].team == chars[j].team) continue;
-						num dx = chars[j].x - chars[i].x;
-						num dy = chars[j].y - chars[i].y;
+						if (items[j].type != ITEM_FOOD) continue;
+						num dx = items[j].x - chars[i].x;
+						num dy = items[j].y - chars[i].y;
 						num qu = dx*dx + dy*dy;
 						if (qu < nearestqu) {
 							nearest = j;
@@ -316,89 +253,17 @@ void simulate() {
 				num x = chars[i].x;
 				num y = chars[i].y;
 				num scale = invsqrt_nr((x*x+y*y)/UNIT);
-				vx = -x*scale/UNIT/4;
-				vy = -y*scale/UNIT/4;
-			} else if (nearestqu < 64*REACH * REACH) {
-				if (chars[nearest].strat == STRAT_HUNT) {
-					chars[i].strat = STRAT_HUNT;
-					chars[i].leader = -1;
-					chars[i].team = chars[nearest].team;
-				} else {
-					long lead = nearest, follow = i;
-					if (chars[i].leader > chars[nearest].leader) {
-						lead = i, follow = nearest;
-					}
-					chars[lead].leader += chars[follow].leader;
-					chars[follow].strat = STRAT_FORM_FOLLOW;
-					chars[follow].leader = lead;
-					chars[follow].team = chars[lead].team;
-				}
+				vx = -y*scale/UNIT/4;
+				vy =  x*scale/UNIT/4;
+			} else if (nearestqu < REACH * REACH) {
+				//chunk_remove_item(nearest);
+				items[nearest].type = ITEM_NULL;
+				chars[i].deadframe += 60;
 			} else {
 				num scale = invsqrt_nr(nearestqu/UNIT);
 				vx = nearestdx * scale / UNIT / 4;
 				vy = nearestdy * scale / UNIT / 4;
 			}
-		} else if (chars[i].strat == STRAT_FORM_FOLLOW) {
-			long j = chars[i].leader;
-			if (chars[j].strat == STRAT_FORM_LEAD) {
-				num dx = chars[j].x - chars[i].x;
-				num dy = chars[j].y - chars[i].y;
-				num qu = dx*dx + dy*dy;
-				if (qu > REACH * REACH) {
-					num scale = invsqrt_nr(qu / UNIT);
-					vx = dx * scale / UNIT / 4;
-					vy = dy * scale / UNIT / 4;
-				}
-			} else {
-				chars[i].strat = chars[j].strat;
-				chars[i].leader = chars[j].leader;
-				chars[i].team = chars[j].team;
-			}
-		} else if (chars[i].strat == STRAT_HUNT) {
-			long nearest = -1;
-			long nearestqu = AWARENESS * AWARENESS;
-			num nearestdx, nearestdy;
-			for (int di = cl; di <= cr; di++) {
-				for (int dj = cu; dj <= cd; dj++) {
-					struct Chunk *chunk = &chunks[di][dj];
-					range(k, chunk->total_num) {
-						if ((chunk->refs[k] & REF_SORT) != REF_CHAR) continue;
-						size_t j = chunk->refs[k] & REF_IND;
-						if (chars[j].team == chars[i].team) continue;
-						if (chars[j].strat == STRAT_DEAD
-								|| chars[j].health == 0) continue;
-						num dx = chars[j].x - chars[i].x;
-						num dy = chars[j].y - chars[i].y;
-						num qu = dx*dx + dy*dy;
-						if (qu < nearestqu) {
-							nearest = j;
-							nearestqu = qu;
-							nearestdx = dx;
-							nearestdy = dy;
-						}
-					}
-				}
-			}
-			if (nearest == -1) {
-				num x = chars[i].x;
-				num y = chars[i].y;
-				num scale = invsqrt_nr((x*x+y*y)/UNIT);
-				vx = -x*scale/UNIT/4;
-				vy = -y*scale/UNIT/4;
-			} else if (nearestqu < 64*REACH * REACH) {
-				chars[nearest].health--;
-				if (chars[nearest].health <= 0) {
-					chars[nearest].strat = STRAT_DEAD;
-					chars[nearest].team = -1;
-					chars[nearest].leader = -1;
-				}
-			} else {
-				num scale = invsqrt_nr(nearestqu/UNIT);
-				vx = nearestdx * scale / UNIT / 4;
-				vy = nearestdy * scale / UNIT / 4;
-			}
-		} else {
-			printf("WARNING unresolved strategy %d\n", chars[i].strat);
 		}
 
 		{
@@ -484,7 +349,7 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 	size_t total = 0;
 	float dx = 0.95f/100.0f;
 	range (i, item_num) {
-		if (items[i].type == ITEM_NULL || items[i].held_by != -1) continue;
+		if (items[i].type == ITEM_NULL /*|| items[i].held_by != -1*/) continue;
 		float x = (float)items[i].x / (float)DIM;
 		float y = (float)items[i].y / (float)DIM;
 
@@ -501,13 +366,13 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 		float y = (float)chars[i].y / (float)DIM;
 
 		float col[3] = {0.5f, 0.5f, 0.5f};
-		if (chars[i].team != -1) {
-			bright((float)(chars[i].team % 12)*0.5f, col);
-			if (chars[i].team / 12 % 2) {
-				col[0] *= 0.5f;
-				col[1] *= 0.5f;
-				col[2] *= 0.5f;
-			}
+		if (frame < chars[i].deadframe) {
+			bright((float)(i % 12)*0.5f, col);
+		}
+		if (i / 12 % 2) {
+			col[0] *= 0.5f;
+			col[1] *= 0.5f;
+			col[2] *= 0.5f;
 		}
 
 		circle(vertex_data, &total, x, y, dx, col[0], col[1], col[2]);
@@ -535,9 +400,10 @@ int main() {
 		glfwPollEvents();
 
 		frame++;
-		if (frame % 600 == 0) {
+		if (frame % 300 == 0) {
 			printf("reached frame %d (%d seconds)\n", frame, time(NULL)-start_time);
-			// init();
+			frame = 0;
+			init();
 		}
 
 		simulate();
