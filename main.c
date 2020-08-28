@@ -31,6 +31,150 @@ num invsqrt_nr(num x) {
 	return y;
 }
 
+#define NAME_BUF_CAP 65536
+char name_buf[NAME_BUF_CAP];
+size_t name_buf_len = 0;
+
+char *alloc_name(const char *in, size_t len) {
+	char *out = &name_buf[name_buf_len];
+	name_buf_len += len + 1;
+	if (name_buf_len > NAME_BUF_CAP) {
+		printf("Ran out of room in name buffer\n");
+		exit(1);
+	}
+	memcpy(out, in, len);
+	out[len] = '\0';
+	return out;
+}
+
+#define ITEM_TYPE_CAP 256
+struct ItemType {
+	char *name;
+	struct ItemType *turns_into;
+	int live_frames;
+	uint8_t color[3];
+	bool color_initialized;
+} item_types[ITEM_TYPE_CAP];
+size_t item_type_count = 0;
+
+enum TokenType {
+	TOKEN_NONE,
+	TOKEN_INVALID,
+	TOKEN_ALPHA,
+	TOKEN_NUM,
+	TOKEN_ITEM,
+	TOKEN_SYMBOL, // unused, but no token greater than this has any alphanum
+	TOKEN_EQ,
+};
+
+struct Token {
+	enum TokenType type;
+	char *start;
+	char *end;
+	// only initialized if type is TOKEN_NUM
+	bool negate;
+	unsigned whole;
+	unsigned nume;
+	unsigned denom;
+};
+
+void get_token(struct Token *out, char *str) {
+	out->start = str;
+	out->end = str;
+	out->type = TOKEN_NONE;
+	while (true) {
+		char c = *out->end;
+		if (c == '\0' || c == '\n') {
+			break;
+		} else if (c == ' ' || c == '\t') {
+			if (out->type != TOKEN_NONE) {
+				break;
+			}
+			out->start += 1;
+		} else if (('A' <= c && c <= 'Z') || ('a' <= c && c <= 'z')) {
+			if (out->type == TOKEN_NONE) {
+				out->type = TOKEN_ALPHA;
+			} else if (out->type == TOKEN_NUM) {
+				out->type = TOKEN_INVALID;
+			} else if (out->type >= TOKEN_SYMBOL) {
+				break;
+			}
+		} else if ('0' <= c && c <= '9') {
+			if (out->type == TOKEN_NONE) {
+				out->type = TOKEN_NUM;
+				out->negate = false;
+				out->whole = c - '0';
+				out->nume = 0;
+				out->denom = 1;
+			} else if (out->type == TOKEN_NUM) {
+				out->whole = out->whole * 10 + c - '0';
+			} else if (out->type >= TOKEN_SYMBOL) {
+				break;
+			}
+		} else if (c == '=') {
+			if (out->type == TOKEN_NONE) {
+				out->type = TOKEN_EQ;
+			} else {
+				break;
+			}
+		}
+		out->end += 1;
+	}
+	size_t tok_len = out->end - out->start;
+	if (out->type == TOKEN_ALPHA) {
+		if (strncmp(out->start, "item", tok_len) == 0) {
+			out->type = TOKEN_ITEM;
+		}
+	}
+}
+
+enum TokenType get_token_type(char **str) {
+	struct Token t;
+	get_token(&t, *str);
+	*str = t.end;
+	return t.type;
+}
+
+void parse_data() {
+	FILE* f = fopen("data.txt", "r");
+
+	item_type_count = 0;
+
+	while (feof(f) == 0) {
+		const int STR_CAP = 256;
+		char str[STR_CAP];
+		fgets(str, STR_CAP, f);
+		char *curr = str;
+		struct Token t;
+		get_token(&t, curr);
+		curr = t.end;
+		if (t.type == TOKEN_NONE) {
+			continue;
+		}
+		if (t.type == TOKEN_ITEM) {
+			if (item_type_count >= ITEM_TYPE_CAP) {
+				printf("Hit item type capacity\n");
+				exit(1);
+			}
+			struct ItemType *out = &item_types[item_type_count];
+			item_type_count += 1;
+			get_token(&t, curr);
+			curr = t.end;
+			if (t.type != TOKEN_ALPHA) {
+				printf("Expected name after keyword \"item\"\n");
+				exit(1);
+			}
+			out->name = alloc_name(t.start, t.end - t.start);
+			out->turns_into = NULL;
+			out->live_frames = 0;
+			out->color_initialized = false;
+		}
+	}
+
+	fclose(f);
+}
+
+
 // @Robustness why do large IDIM values cause a segfault?
 #define IDIM 300
 #define DIM_CTIME (UNIT_CTIME * IDIM)
@@ -54,11 +198,6 @@ struct Char {
 	// long held_item;
 } chars[CHAR_CAP];
 
-enum ItemType {
-	ITEM_NULL,
-	ITEM_FOOD,
-};
-
 #define ITEM_CAP (IDIM * IDIM / 16)
 
 size_t item_num = 0;
@@ -66,7 +205,7 @@ size_t item_num = 0;
 struct Item {
 	num x, y;
 	// long held_by;
-	enum ItemType type;
+	struct ItemType *type;
 } items[ITEM_CAP];
 
 size_t fixture_num = 0;
@@ -199,7 +338,7 @@ void init() {
 		const num RANGE = DIM - 1;
 		items[i].x = rand_int(g) * RANGE / g;
 		items[i].y = rand_int(g) * RANGE / g;
-		items[i].type = ITEM_FOOD;
+		items[i].type = item_types + i % item_type_count;
 		// items[i].held_by = -1;
 		item_num++;
 		chunk_add_item(i);
@@ -236,7 +375,7 @@ void simulate() {
 					range(k, chunk->total_num) {
 						if ((chunk->refs[k] & REF_SORT) != REF_ITEM) continue;
 						size_t j = chunk->refs[k] & REF_IND;
-						if (items[j].type != ITEM_FOOD) continue;
+						if (items[j].type == NULL) continue;
 						num dx = items[j].x - chars[i].x;
 						num dy = items[j].y - chars[i].y;
 						num qu = dx*dx + dy*dy;
@@ -257,7 +396,7 @@ void simulate() {
 				vy =  x*scale/UNIT/4;
 			} else if (nearestqu < REACH * REACH) {
 				//chunk_remove_item(nearest);
-				items[nearest].type = ITEM_NULL;
+				items[nearest].type = NULL;
 				chars[i].deadframe += 60;
 			} else {
 				num scale = invsqrt_nr(nearestqu/UNIT);
@@ -349,7 +488,7 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 	size_t total = 0;
 	float dx = 0.95f/100.0f;
 	range (i, item_num) {
-		if (items[i].type == ITEM_NULL /*|| items[i].held_by != -1*/) continue;
+		if (items[i].type == NULL /*|| items[i].held_by != -1*/) continue;
 		float x = (float)items[i].x / (float)DIM;
 		float y = (float)items[i].y / (float)DIM;
 
@@ -387,6 +526,10 @@ void recordResize(GLFWwindow *window, int width, int height) {
 
 int main() {
 	srand(time(&start_time));
+
+	parse_data();
+	printf("Total of %lu item types\n", item_type_count);
+
 	struct GraphicsInstance gi = createGraphicsInstance();
 	struct Graphics g = createGraphics(&gi);
 
@@ -400,7 +543,7 @@ int main() {
 		glfwPollEvents();
 
 		frame++;
-		if (frame % 300 == 0) {
+		if (frame % 600 == 0) {
 			printf("reached frame %d (%d seconds)\n", frame, time(NULL)-start_time);
 			frame = 0;
 			init();
