@@ -338,7 +338,7 @@ void init() {
 		const num RANGE = DIM - 1;
 		items[i].x = rand_int(g) * RANGE / g;
 		items[i].y = rand_int(g) * RANGE / g;
-		items[i].type = item_types + i % item_type_count;
+		items[i].type = &item_types[i % item_type_count];
 		// items[i].held_by = -1;
 		item_num++;
 		chunk_add_item(i);
@@ -492,7 +492,21 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 		float x = (float)items[i].x / (float)DIM;
 		float y = (float)items[i].y / (float)DIM;
 
-		square(vertex_data, &total, x, y, dx, 0.0f, 0.0f, 0.7f);
+		float col[3] = {0.5f, 0.5f, 0.5f};
+		struct ItemType *type = items[i].type;
+		if (type->color_initialized) {
+			col[0] = type->color[0];
+			col[1] = type->color[1];
+			col[2] = type->color[2];
+		} else {
+			bright((float)((type - item_types) % 12)*0.5f, col);
+			if ((type - item_types) / 12 % 2) {
+				col[0] *= 0.5f;
+				col[1] *= 0.5f;
+				col[2] *= 0.5f;
+			}
+		}
+		square(vertex_data, &total, x, y, dx, col[0], col[1], col[2]);
 	}
 	range (i, fixture_num) {
 		float x = (float)fixtures[i].x / (float)DIM;
