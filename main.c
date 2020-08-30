@@ -4,6 +4,7 @@
 
 int frame = 0;
 time_t start_time;
+#define FRAMERATE 60
 
 typedef int64_t num;
 #define UNIT_CTIME (1ull << 16)
@@ -62,7 +63,10 @@ enum TokenType {
 	TOKEN_INVALID,
 	TOKEN_ALPHA,
 	TOKEN_NUM,
+	// @Simplicity don't need special tokens for these things if our grammar never
+	// lets lines start with user-defined identifiers
 	TOKEN_ITEM,
+	TOKEN_TRANSFORM,
 	TOKEN_SYMBOL, // unused, but no token greater than this has any alphanum
 	TOKEN_EQ,
 };
@@ -78,7 +82,7 @@ struct Token {
 	unsigned denom;
 };
 
-void get_token(struct Token *out, char *str) {
+void token_get(struct Token *out, char *str) {
 	out->start = str;
 	out->end = str;
 	out->type = TOKEN_NONE;
@@ -124,15 +128,36 @@ void get_token(struct Token *out, char *str) {
 	if (out->type == TOKEN_ALPHA) {
 		if (strncmp(out->start, "item", tok_len) == 0) {
 			out->type = TOKEN_ITEM;
+		} else if (strncmp(out->start, "transform", tok_len) == 0) {
+			out->type = TOKEN_TRANSFORM;
 		}
 	}
 }
 
-enum TokenType get_token_type(char **str) {
+enum TokenType token_get_type(char **str) {
 	struct Token t;
-	get_token(&t, *str);
+	token_get(&t, *str);
 	*str = t.end;
 	return t.type;
+}
+
+#define token_cmp(t, str) (strncmp((t).start, str, (t).end - (t).start) == 0)
+
+struct ItemType* token_get_item_type(char **str) {
+	struct Token t;
+	token_get(&t, *str);
+	*str = t.end;
+	if (t.type != TOKEN_ALPHA) {
+		printf("Expected item type\n");
+		exit(1);
+	}
+	range(i, item_type_count) {
+		if (token_cmp(t, item_types[i].name)) {
+			return &item_types[i];
+		}
+	}
+	printf("Unknown item type \"%s\"\n", alloc_name(t.start, t.end - t.start));
+	exit(1);
 }
 
 void parse_data() {
@@ -146,7 +171,7 @@ void parse_data() {
 		fgets(str, STR_CAP, f);
 		char *curr = str;
 		struct Token t;
-		get_token(&t, curr);
+		token_get(&t, curr);
 		curr = t.end;
 		if (t.type == TOKEN_NONE) {
 			continue;
@@ -158,7 +183,7 @@ void parse_data() {
 			}
 			struct ItemType *out = &item_types[item_type_count];
 			item_type_count += 1;
-			get_token(&t, curr);
+			token_get(&t, curr);
 			curr = t.end;
 			if (t.type != TOKEN_ALPHA) {
 				printf("Expected name after keyword \"item\"\n");
@@ -166,8 +191,59 @@ void parse_data() {
 			}
 			out->name = alloc_name(t.start, t.end - t.start);
 			out->turns_into = NULL;
-			out->live_frames = 0;
+			out->live_frames = -1;
 			out->color_initialized = false;
+			if (token_get_type(&curr) != TOKEN_NONE) {
+				printf("Expected end of line after item declaration\n");
+				exit(1);
+			}
+		}
+		if (t.type == TOKEN_TRANSFORM) {
+			if (item_type_count == 0) {
+				printf("Only items can have transformation rules\n");
+				exit(1);
+			}
+			token_get(&t, curr);
+			curr = t.end;
+			bool into;
+			if (token_cmp(t, "from")) {
+				into = false;
+			} else if (token_cmp(t, "into")) {
+				into = true;
+			} else {
+				printf("Expected \"from\" or \"into\", got \"%s\"\n", alloc_name(t.start, t.end - t.start));
+				exit(1);
+			}
+			struct ItemType* obj = token_get_item_type(&curr);
+			token_get(&t, curr);
+			curr = t.end;
+			if (!token_cmp(t, "after")) {
+				printf("Expected \"after\" got \"%s\"\n", alloc_name(t.start, t.end - t.start));
+				exit(1);
+			}
+			token_get(&t, curr);
+			curr = t.end;
+			if (t.type != TOKEN_NUM) {
+				printf("Expected number, got \"%s\"\n", alloc_name(t.start, t.end - t.start));
+				exit(1);
+			}
+			int live_frames = (t.whole * FRAMERATE + t.nume * FRAMERATE / t.denom);
+			struct ItemType *from_type;
+			struct ItemType *into_type;
+			if (into) {
+				from_type = &item_types[item_type_count - 1];
+				into_type = obj;
+			} else {
+				into_type = &item_types[item_type_count - 1];
+				from_type = obj;
+			}
+			from_type->turns_into = into_type;
+			from_type->live_frames = live_frames;
+		}
+		token_get(&t, curr);
+		if (t.type != TOKEN_NONE) {
+			printf("Expected end of line, got \"%s\"\n", alloc_name(t.start, strlen(t.start)));
+			exit(1);
 		}
 	}
 
@@ -205,6 +281,7 @@ size_t item_num = 0;
 struct Item {
 	num x, y;
 	// long held_by;
+	int change_frame;
 	struct ItemType *type;
 } items[ITEM_CAP];
 
@@ -339,6 +416,7 @@ void init() {
 		items[i].x = rand_int(g) * RANGE / g;
 		items[i].y = rand_int(g) * RANGE / g;
 		items[i].type = &item_types[i % item_type_count];
+		items[i].change_frame = items[i].type->live_frames;
 		// items[i].held_by = -1;
 		item_num++;
 		chunk_add_item(i);
@@ -356,6 +434,15 @@ void init() {
 }
 
 void simulate() {
+	range (i, item_num) {
+		if (items[i].type != NULL && 0 <= items[i].change_frame && items[i].change_frame <= frame)
+		{
+			items[i].type = items[i].type->turns_into;
+			if (items[i].type != NULL) {
+				items[i].change_frame += items[i].type->live_frames;
+			}
+		}
+	}
 	range (i, char_num) {
 		num vx = 0, vy = 0;
 		const size_t ci = get_chunk(chars[i].x);

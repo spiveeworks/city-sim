@@ -2,4 +2,6 @@ item foo
 item bar
 item baz
 item quux
+transform into baz after 1
+transform from baz after 1
 
