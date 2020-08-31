@@ -511,6 +511,8 @@ void simulate() {
 	}
 }
 
+size_t selected_char = ~0;
+
 void bright(float c, float *col) {
 	if (c < 1.0f) {
 		col[0] = 1.0f, col[1] = c, col[2] = 0.0f;
@@ -582,9 +584,9 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 		float col[3] = {0.5f, 0.5f, 0.5f};
 		struct ItemType *type = items[i].type;
 		if (type->color_initialized) {
-			col[0] = type->color[0];
-			col[1] = type->color[1];
-			col[2] = type->color[2];
+			col[0] = (float)type->color[0]/255.0f;
+			col[1] = (float)type->color[1]/255.0f;
+			col[2] = (float)type->color[2]/255.0f;
 		} else {
 			bright((float)((type - item_types) % 12)*0.5f, col);
 			if ((type - item_types) / 12 % 2) {
@@ -614,6 +616,11 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 			col[1] *= 0.5f;
 			col[2] *= 0.5f;
 		}
+		if (i == selected_char) {
+			col[0] = 1.0f;
+			col[1] = 1.0f;
+			col[2] = 1.0f;
+		}
 
 		circle(vertex_data, &total, x, y, dx, col[0], col[1], col[2]);
 	}
@@ -623,6 +630,48 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 void recordResize(GLFWwindow *window, int width, int height) {
 	bool *recreateGraphics = glfwGetWindowUserPointer(window);
 	*recreateGraphics = true;
+}
+
+const num MOUSE_RANGE = DIM_CTIME / 32;
+
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
+	double glfw_x;
+	double glfw_y;
+	glfwGetCursorPos(window, &glfw_x, &glfw_y);
+	int width;
+	int height;
+	glfwGetFramebufferSize(window, &width, &height);
+	num x = 2 * DIM * (num)glfw_x / width - DIM;
+	num y = 2 * DIM * (num)glfw_y / height - DIM;
+	if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_LEFT) {
+		size_t cl = get_chunk(max(x - MOUSE_RANGE, -DIM));
+		size_t cr = get_chunk(min(x + MOUSE_RANGE, DIM));
+		size_t cu = get_chunk(max(y - MOUSE_RANGE, -DIM));
+		size_t cd = get_chunk(min(y + MOUSE_RANGE, DIM));
+		long nearest = -1;
+		long nearestqu = MOUSE_RANGE * MOUSE_RANGE;
+		for (int di = cl; di <= cr; di++) {
+			for (int dj = cu; dj <= cd; dj++) {
+				struct Chunk *chunk = &chunks[di][dj];
+				range(k, chunk->total_num) {
+					if ((chunk->refs[k] & REF_SORT) != REF_CHAR) continue;
+					size_t j = chunk->refs[k] & REF_IND;
+					// if (chars[j].type == NULL) continue;
+					num dx = chars[j].x - x;
+					num dy = chars[j].y - y;
+					num qu = dx*dx + dy*dy;
+					if (qu < nearestqu) {
+						nearest = j;
+						nearestqu = qu;
+					}
+				}
+			}
+		}
+		if (nearest != -1) {
+			selected_char = nearest;
+		}
+	} else if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_RIGHT) {
+	}
 }
 
 int main() {
@@ -637,6 +686,7 @@ int main() {
 	bool recreateGraphics = false;
 	glfwSetWindowUserPointer(gi.window, &recreateGraphics);
 	glfwSetFramebufferSizeCallback(gi.window, recordResize);
+	glfwSetMouseButtonCallback(gi.window, mouse_button_callback);
 
 	init();
 
