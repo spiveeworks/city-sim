@@ -300,11 +300,8 @@ struct Fixture {
 } fixtures[FIXTURE_CAP];
 
 #define AWARENESS (UNIT_CTIME * 32)
-#define SPREAD_CURVE (2*UNIT)
-#define SPREAD_FORCE (100000*UNIT)
-#define SPREAD_WALL (5000*UNIT)
 
-#define CHUNK_SIZE AWARENESS
+#define CHUNK_SIZE (UNIT_CTIME * 16)
 #define CHUNK_DIM (2 * DIM_CTIME / CHUNK_SIZE + 1)
 #define CHUNK_BUFFER_SIZE 1024
 
@@ -433,6 +430,50 @@ void init() {
 	printf("Spread %d characters, %d items, %d fixtures across %d chunks, highest was %d in one chunk\n", char_num, item_num, fixture_num, CHUNK_DIM*CHUNK_DIM, high_water);
 }
 
+ref find_nearest(num x, num y, num r, bool (*cond)(ref x)) {
+	size_t cl = get_chunk(max(x - r, 1-DIM));
+	size_t cr = get_chunk(min(x + r, DIM-1));
+	size_t cu = get_chunk(max(y - r, 1-DIM));
+	size_t cd = get_chunk(min(y + r, DIM-1));
+	ref nearest = -1;
+	long nearestqu = r * r;
+	for (int di = cl; di <= cr; di++) {
+		for (int dj = cu; dj <= cd; dj++) {
+			struct Chunk *chunk = &chunks[di][dj];
+			range(k, chunk->total_num) {
+				ref r = chunk->refs[k];
+				if (!cond(r)) continue;
+				num itx, ity;
+				if ((r & REF_SORT) == REF_CHAR) {
+					itx = chars[r & REF_IND].x;
+					ity = chars[r & REF_IND].y;
+				} else if ((r & REF_SORT) == REF_ITEM) {
+					itx = items[r & REF_IND].x;
+					ity = items[r & REF_IND].y;
+				} else if ((r & REF_SORT) == REF_FIXTURE) {
+					itx = fixtures[r & REF_IND].x;
+					ity = fixtures[r & REF_IND].y;
+				} else {
+					printf("Chunk contained unknown ref %x\n", r);
+					exit(1);
+				}
+				num dx = itx - x;
+				num dy = ity - y;
+				num qu = dx*dx + dy*dy;
+				if (qu < nearestqu) {
+					nearest = r;
+					nearestqu = qu;
+				}
+			}
+		}
+	}
+	return nearest;
+}
+
+bool is_char(ref x) { return (x & REF_SORT) == REF_CHAR; }
+bool is_item(ref x) { return (x & REF_SORT) == REF_ITEM; }
+bool is_fixture(ref x) { return (x & REF_SORT) == REF_FIXTURE; }
+
 void simulate() {
 	range (i, item_num) {
 		if (items[i].type != NULL && 0 <= items[i].change_frame && items[i].change_frame <= frame)
@@ -448,47 +489,28 @@ void simulate() {
 		const size_t ci = get_chunk(chars[i].x);
 		const size_t cj = get_chunk(chars[i].y);
 
-		const size_t cl = max(1, ci)-1;
-		const size_t cr = min(CHUNK_DIM-1, ci+1);
-		const size_t cu = max(1, cj)-1;
-		const size_t cd = min(CHUNK_DIM-1, cj+1);
 		if (frame < chars[i].deadframe) {
-			long nearest = -1;
-			long nearestqu = AWARENESS * AWARENESS;
-			num nearestdx, nearestdy;
-			for (int di = cl; di <= cr; di++) {
-				for (int dj = cu; dj <= cd; dj++) {
-					struct Chunk *chunk = &chunks[di][dj];
-					range(k, chunk->total_num) {
-						if ((chunk->refs[k] & REF_SORT) != REF_ITEM) continue;
-						size_t j = chunk->refs[k] & REF_IND;
-						if (items[j].type == NULL) continue;
-						num dx = items[j].x - chars[i].x;
-						num dy = items[j].y - chars[i].y;
-						num qu = dx*dx + dy*dy;
-						if (qu < nearestqu) {
-							nearest = j;
-							nearestqu = qu;
-							nearestdx = dx;
-							nearestdy = dy;
-						}
-					}
-				}
-			}
+			ref nearest = find_nearest(chars[i].x, chars[i].y, AWARENESS, is_item);
 			if (nearest == -1) {
 				num x = chars[i].x;
 				num y = chars[i].y;
 				num scale = invsqrt_nr((x*x+y*y)/UNIT);
 				vx = -y*scale/UNIT/4;
 				vy =  x*scale/UNIT/4;
-			} else if (nearestqu < REACH * REACH) {
-				//chunk_remove_item(nearest);
-				items[nearest].type = NULL;
-				chars[i].deadframe += 60;
 			} else {
-				num scale = invsqrt_nr(nearestqu/UNIT);
-				vx = nearestdx * scale / UNIT / 4;
-				vy = nearestdy * scale / UNIT / 4;
+				nearest &= REF_IND;
+				num dx = items[nearest].x - chars[i].x;
+				num dy = items[nearest].y - chars[i].y;
+				num qu = dx * dx + dy * dy;
+				if (qu < REACH * REACH) {
+					chunk_remove_item(nearest);
+					items[nearest].type = NULL;
+					chars[i].deadframe += 60;
+				} else {
+					num scale = invsqrt_nr(qu/UNIT);
+					vx = dx * scale / UNIT / 4;
+					vy = dy * scale / UNIT / 4;
+				}
 			}
 		}
 
@@ -644,31 +666,9 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 	num x = 2 * DIM * (num)glfw_x / width - DIM;
 	num y = 2 * DIM * (num)glfw_y / height - DIM;
 	if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_LEFT) {
-		size_t cl = get_chunk(max(x - MOUSE_RANGE, -DIM));
-		size_t cr = get_chunk(min(x + MOUSE_RANGE, DIM));
-		size_t cu = get_chunk(max(y - MOUSE_RANGE, -DIM));
-		size_t cd = get_chunk(min(y + MOUSE_RANGE, DIM));
-		long nearest = -1;
-		long nearestqu = MOUSE_RANGE * MOUSE_RANGE;
-		for (int di = cl; di <= cr; di++) {
-			for (int dj = cu; dj <= cd; dj++) {
-				struct Chunk *chunk = &chunks[di][dj];
-				range(k, chunk->total_num) {
-					if ((chunk->refs[k] & REF_SORT) != REF_CHAR) continue;
-					size_t j = chunk->refs[k] & REF_IND;
-					// if (chars[j].type == NULL) continue;
-					num dx = chars[j].x - x;
-					num dy = chars[j].y - y;
-					num qu = dx*dx + dy*dy;
-					if (qu < nearestqu) {
-						nearest = j;
-						nearestqu = qu;
-					}
-				}
-			}
-		}
+		ref nearest = find_nearest(x, y, MOUSE_RANGE, is_char);
 		if (nearest != -1) {
-			selected_char = nearest;
+			selected_char = nearest & REF_IND;
 		}
 	} else if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_RIGHT) {
 	}
