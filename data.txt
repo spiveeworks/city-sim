@@ -7,6 +7,7 @@ transform from baz after 60
 
 recipe makebar
 duration 3
+input bar
 input foo
 output bar
 output bar

@@ -341,8 +341,12 @@ struct Char {
 	num x, y;
 	// num velx, vely;
 	// int deadframe;
-	// enum CharTask task;
-	// long held_item;
+	Recipe goal;
+	num craft_x, craft_y;
+	int craft_t;
+	uint8_t input_count;
+	long inputs[RECIPE_INPUT_CAP];
+	long held_item;
 } chars[CHAR_CAP];
 
 #define ITEM_CAP (IDIM * IDIM / 16)
@@ -351,7 +355,7 @@ size_t item_num = 0;
 
 struct Item {
 	num x, y;
-	// long held_by;
+	long held_by;
 	int change_frame;
 	ItemType type;
 } items[ITEM_CAP];
@@ -485,15 +489,18 @@ void init() {
 		items[i].y = rand_int(g) * RANGE / g;
 		items[i].type = &item_types[i % item_type_count];
 		items[i].change_frame = items[i].type->live_frames;
-		// items[i].held_by = -1;
+		items[i].held_by = -1;
 		item_num++;
 		chunk_add_item(i);
 	}
 	range (i, CHAR_INITIAL) {
 		const int g = 1000; // granularity of randomness
-		const num RANGE = DIM * 7 / 8;
+		const num RANGE = DIM - 1;
 		chars[i].x = rand_int(g) * RANGE / g;
 		chars[i].y = rand_int(g) * RANGE / g;
+		chars[i].held_item = -1;
+		chars[i].input_count = 0;
+		chars[i].goal = &recipes[i % recipe_count];
 		char_num++;
 		chunk_add_char(i);
 	}
@@ -544,6 +551,11 @@ bool is_char(ref x) { return (x & REF_SORT) == REF_CHAR; }
 bool is_item(ref x) { return (x & REF_SORT) == REF_ITEM; }
 bool is_fixture(ref x) { return (x & REF_SORT) == REF_FIXTURE; }
 
+ItemType target_item_type = NULL;
+bool is_target_item_type(ref x) {
+	return (x & REF_SORT) == REF_ITEM && items[x & REF_IND].type == target_item_type;
+}
+
 void simulate() {
 	range (i, item_num) {
 		if (items[i].type != NULL && 0 <= items[i].change_frame && items[i].change_frame <= frame)
@@ -556,6 +568,119 @@ void simulate() {
 	}
 	range (i, char_num) {
 		num vx = 0, vy = 0;
+
+		Recipe goal = chars[i].goal;
+		if (goal == NULL) {
+			continue;
+		}
+		if (goal->input_count == 0) {
+			printf("Recipes without inputs currently not supported\n");
+			exit(1);
+		} else if (chars[i].held_item != -1) {
+			bool dropit = false;
+			if (chars[i].input_count == 0
+				|| chars[i].input_count >= goal->input_count
+				|| goal->inputs[chars[i].input_count] != items[chars[i].held_item].type
+			) {
+				dropit = true;
+			} else {
+				num dx = chars[i].craft_x - chars[i].x;
+				num dy = chars[i].craft_y - chars[i].y;
+				num qu = dx * dx + dy * dy;
+				if (qu < REACH * REACH) {
+					chars[i].inputs[chars[i].input_count] = chars[i].held_item;
+					chars[i].input_count += 1;
+					dropit = true;
+					chars[i].craft_t = frame + goal->duration;
+				} else {
+					num scale = invsqrt_nr(qu / UNIT);
+					vx = dx * scale / UNIT / 4;
+					vy = dy * scale / UNIT / 4;
+				}
+			}
+			if (dropit) {
+				long it = chars[i].held_item;
+				items[it].x = chars[i].x;
+				items[it].y = chars[i].y;
+				items[it].held_by = -1;
+				chars[i].held_item = -1;
+				chunk_add_item(it);
+			}
+		} else if (chars[i].input_count < goal->input_count) {
+			target_item_type = goal->inputs[chars[i].input_count];
+			ref target = find_nearest(chars[i].x, chars[i].y, AWARENESS, is_target_item_type);
+			if (target == -1) {
+				continue;
+			}
+			target &= REF_IND;
+			num dx = items[target].x - chars[i].x;
+			num dy = items[target].y - chars[i].y;
+			num qu = dx * dx + dy * dy;
+			if (qu < REACH * REACH || (chars[i].input_count == 0 && goal->input_count > 1)) {
+				if (chars[i].input_count == 0) {
+					chars[i].inputs[chars[i].input_count] = target;
+					chars[i].input_count += 1;
+					chars[i].craft_x = items[target].x;
+					chars[i].craft_y = items[target].y;
+					chars[i].craft_t = frame + goal->duration;
+				} else {
+					items[target].held_by = i;
+					chars[i].held_item = target;
+					chunk_remove_item(target);
+				}
+			} else {
+				num scale = invsqrt_nr(qu / UNIT);
+				vx = dx * scale / UNIT / 4;
+				vy = dy * scale / UNIT / 4;
+			}
+		} else {
+			bool stolen = false;
+			range(inp, chars[i].input_count) {
+				long j = chars[i].inputs[inp];
+				if (items[j].type != goal->inputs[inp]) {
+					stolen = true;
+					chars[i].input_count = j;
+					break;
+				}
+				num dx = items[j].x - chars[i].craft_x;
+				num dy = items[j].y - chars[i].craft_y;
+				num qu = dx * dx + dy * dy;
+				if (qu > REACH * REACH) {
+					stolen = true;
+					chars[i].input_count = j;
+					break;
+				}
+			}
+			if (!stolen && frame >= chars[i].craft_t) {
+				range(inp, chars[i].input_count) {
+					long j = chars[i].inputs[inp];
+					items[j].type = NULL;
+					chunk_remove_item(j);
+				}
+				chars[i].input_count = 0;
+				range(out, goal->output_count) {
+					long j = 0;
+					while (items[j].type != NULL) {
+						j += 1;
+						if (j >= ITEM_CAP) {
+							printf("Hit item capacity\n");
+							exit(1);
+						}
+					}
+					items[j].type = goal->outputs[out];
+					items[j].x = chars[i].craft_x;
+					items[j].y = chars[i].craft_y;
+					items[j].held_by = -1;
+					int live_frames = goal->outputs[out]->live_frames;
+					if (live_frames == -1) {
+						items[j].change_frame = -1;
+					} else {
+						items[j].change_frame = frame + live_frames;
+					}
+					chunk_add_item(j);
+				}
+			}
+		}
 
 		{
 			chunk_remove_char(i);
@@ -642,7 +767,7 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 	size_t total = 0;
 	float dx = 0.95f/100.0f;
 	range (i, item_num) {
-		if (items[i].type == NULL /*|| items[i].held_by != -1*/) continue;
+		if (items[i].type == NULL || items[i].held_by != -1) continue;
 		float x = (float)items[i].x / (float)DIM;
 		float y = (float)items[i].y / (float)DIM;
 
