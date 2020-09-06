@@ -33,12 +33,12 @@ num invsqrt_nr(num x) {
 
 
 // @Robustness why do large IDIM values cause a segfault?
-#define IDIM 300
+#define IDIM 200
 #define DIM_CTIME (UNIT_CTIME * IDIM)
 const num DIM = DIM_CTIME;
 
 #define CHAR_CAP (IDIM * IDIM / 4)
-#define CHAR_INITIAL 10
+#define CHAR_INITIAL (IDIM * IDIM / 1024)
 
 #define REACH (UNIT)
 #define MAX_HEALTH 60
@@ -58,6 +58,7 @@ struct Char {
 } chars[CHAR_CAP];
 
 #define ITEM_CAP (IDIM * IDIM / 16)
+#define ITEM_INITIAL (IDIM * IDIM / 64)
 
 size_t item_num = 0;
 
@@ -129,7 +130,9 @@ void chunk_remove_item(long i) {
 	size_t ci = get_chunk(c.x);
 	size_t cj = get_chunk(c.y);
 	if (!chunk_remove(&chunks[ci][cj], i | REF_ITEM)) {
-		printf("WARNING: item %ld not removed from chunk %lu, %lu\n", i, ci, cj);
+		ItemType ty = items[i].type;
+		printf("WARNING: item %ld of type %s not removed from chunk %lu, %lu\n",
+				i, ty ? ty->name : "NULL", ci, cj);
 	}
 }
 
@@ -190,7 +193,7 @@ void init() {
 			}
 		}
 	}
-	range (i, 1000) {
+	range (i, ITEM_INITIAL) {
 		const int g = 1000; // granularity of randomness
 		const num RANGE = DIM - 1;
 		items[i].x = rand_int(g) * RANGE / g;
@@ -259,19 +262,39 @@ bool is_char(ref x) { return (x & REF_SORT) == REF_CHAR; }
 bool is_item(ref x) { return (x & REF_SORT) == REF_ITEM; }
 bool is_fixture(ref x) { return (x & REF_SORT) == REF_FIXTURE; }
 
-ItemType target_item_type = NULL;
-bool is_target_item_type(ref x) {
-	return (x & REF_SORT) == REF_ITEM && items[x & REF_IND].type == target_item_type;
+size_t is_valid_input_current_char;
+bool is_valid_input(ref x) {
+	size_t i = is_valid_input_current_char;
+	if ((x & REF_SORT) != REF_ITEM) {
+		return false;
+	}
+	x &= REF_IND;
+	size_t input_count = chars[i].input_count;
+	if (items[x].type != chars[i].goal->inputs[input_count]) {
+		return false;
+	}
+	range (inp, input_count) {
+		if (chars[i].inputs[inp] == x) {
+			return false;
+		}
+	}
+	return true;
 }
 
 void simulate() {
 	range (i, item_num) {
 		if (items[i].type != NULL && 0 <= items[i].change_frame && items[i].change_frame <= frame)
 		{
-			items[i].type = items[i].type->turns_into;
-			if (items[i].type != NULL) {
+			ItemType into = items[i].type->turns_into;
+			if (into == NULL) {
+				chunk_remove_item(i);
+				//printf("Destroying %s\n", items[i].type->name);
+			} else if (into->live_frames = -1) {
+				items[i].change_frame = -1;
+			} else {
 				items[i].change_frame += items[i].type->live_frames;
 			}
+			items[i].type = into;
 		}
 	}
 	range (i, char_num) {
@@ -315,8 +338,8 @@ void simulate() {
 				chunk_add_item(it);
 			}
 		} else if (chars[i].input_count < goal->input_count) {
-			target_item_type = goal->inputs[chars[i].input_count];
-			ref target = find_nearest(chars[i].x, chars[i].y, AWARENESS, is_target_item_type);
+			is_valid_input_current_char = i;
+			ref target = find_nearest(chars[i].x, chars[i].y, AWARENESS, is_valid_input);
 			if (target == -1) {
 				continue;
 			}
@@ -345,7 +368,7 @@ void simulate() {
 			bool stolen = false;
 			range(inp, chars[i].input_count) {
 				long j = chars[i].inputs[inp];
-				if (items[j].type != goal->inputs[inp]) {
+				if (items[j].type != goal->inputs[inp] || items[j].held_by != -1) {
 					stolen = true;
 					chars[i].input_count = j;
 					break;
@@ -362,8 +385,8 @@ void simulate() {
 			if (!stolen && frame >= chars[i].craft_t) {
 				range(inp, chars[i].input_count) {
 					long j = chars[i].inputs[inp];
-					items[j].type = NULL;
 					chunk_remove_item(j);
+					items[j].type = NULL;
 				}
 				chars[i].input_count = 0;
 				range(out, goal->output_count) {

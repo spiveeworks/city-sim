@@ -1,14 +1,23 @@
-item foo
-item bar
-item baz
-item quux
-transform into baz after 60
-transform from baz after 60
+item axe
+item lumber
+item house
+item sapling
+item tree
+transform from sapling after 5
+item spot
 
-recipe makebar
-duration 3
-input bar
-input foo
-output bar
-output bar
-output bar
+recipe fell
+duration 1
+input tree
+input axe
+output axe
+output sapling
+output lumber
+
+recipe build
+duration 1
+input spot
+input lumber
+input lumber
+output house
+
