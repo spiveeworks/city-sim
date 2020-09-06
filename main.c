@@ -57,16 +57,26 @@ struct ItemType {
 	bool color_initialized;
 } item_types[ITEM_TYPE_CAP];
 size_t item_type_count = 0;
+typedef struct ItemType *ItemType;
+
+#define RECIPE_CAP 256
+#define RECIPE_INPUT_CAP 8
+struct Recipe {
+	char *name;
+	int duration;
+	uint8_t input_count;
+	uint8_t output_count;
+	ItemType inputs[RECIPE_INPUT_CAP];
+	ItemType outputs[RECIPE_INPUT_CAP];
+} recipes[RECIPE_CAP];
+size_t recipe_count = 0;
+typedef struct Recipe *Recipe;
 
 enum TokenType {
 	TOKEN_NONE,
 	TOKEN_INVALID,
 	TOKEN_ALPHA,
 	TOKEN_NUM,
-	// @Simplicity don't need special tokens for these things if our grammar never
-	// lets lines start with user-defined identifiers
-	TOKEN_ITEM,
-	TOKEN_TRANSFORM,
 	TOKEN_SYMBOL, // unused, but no token greater than this has any alphanum
 	TOKEN_EQ,
 };
@@ -125,13 +135,6 @@ void token_get(struct Token *out, char *str) {
 		out->end += 1;
 	}
 	size_t tok_len = out->end - out->start;
-	if (out->type == TOKEN_ALPHA) {
-		if (strncmp(out->start, "item", tok_len) == 0) {
-			out->type = TOKEN_ITEM;
-		} else if (strncmp(out->start, "transform", tok_len) == 0) {
-			out->type = TOKEN_TRANSFORM;
-		}
-	}
 }
 
 enum TokenType token_get_type(char **str) {
@@ -143,7 +146,7 @@ enum TokenType token_get_type(char **str) {
 
 #define token_cmp(t, str) (strncmp((t).start, str, (t).end - (t).start) == 0)
 
-struct ItemType* token_get_item_type(char **str) {
+ItemType token_get_item_type(char **str) {
 	struct Token t;
 	token_get(&t, *str);
 	*str = t.end;
@@ -160,10 +163,27 @@ struct ItemType* token_get_item_type(char **str) {
 	exit(1);
 }
 
+num token_get_num(char **str, num unit) {
+	struct Token t;
+	token_get(&t, *str);
+	*str = t.end;
+	if (t.type != TOKEN_NUM) {
+		printf("Expected number, got \"%s\"\n", alloc_name(t.start, t.end - t.start));
+		exit(1);
+	}
+	return t.whole * unit + t.nume * unit / t.denom;
+}
+
 void parse_data() {
 	FILE* f = fopen("data.txt", "r");
 
+	enum {
+		PARSE_STATE_NULL,
+		PARSE_STATE_ITEM,
+		PARSE_STATE_RECIPE,
+	} focus = PARSE_STATE_NULL;
 	item_type_count = 0;
+	// recipe_count = 0;
 
 	while (feof(f) == 0) {
 		const int STR_CAP = 256;
@@ -176,13 +196,18 @@ void parse_data() {
 		if (t.type == TOKEN_NONE) {
 			continue;
 		}
-		if (t.type == TOKEN_ITEM) {
+		if (t.type != TOKEN_ALPHA) {
+			printf("Expected keyword at start of line\n");
+			exit(1);
+		}
+		if (token_cmp(t, "item")) {
 			if (item_type_count >= ITEM_TYPE_CAP) {
 				printf("Hit item type capacity\n");
 				exit(1);
 			}
-			struct ItemType *out = &item_types[item_type_count];
+			ItemType out = &item_types[item_type_count];
 			item_type_count += 1;
+			focus = PARSE_STATE_ITEM;
 			token_get(&t, curr);
 			curr = t.end;
 			if (t.type != TOKEN_ALPHA) {
@@ -197,9 +222,8 @@ void parse_data() {
 				printf("Expected end of line after item declaration\n");
 				exit(1);
 			}
-		}
-		if (t.type == TOKEN_TRANSFORM) {
-			if (item_type_count == 0) {
+		} else if (token_cmp(t, "transform")) {
+			if (focus != PARSE_STATE_ITEM || item_type_count == 0) {
 				printf("Only items can have transformation rules\n");
 				exit(1);
 			}
@@ -214,22 +238,16 @@ void parse_data() {
 				printf("Expected \"from\" or \"into\", got \"%s\"\n", alloc_name(t.start, t.end - t.start));
 				exit(1);
 			}
-			struct ItemType* obj = token_get_item_type(&curr);
+			ItemType obj = token_get_item_type(&curr);
 			token_get(&t, curr);
 			curr = t.end;
 			if (!token_cmp(t, "after")) {
 				printf("Expected \"after\" got \"%s\"\n", alloc_name(t.start, t.end - t.start));
 				exit(1);
 			}
-			token_get(&t, curr);
-			curr = t.end;
-			if (t.type != TOKEN_NUM) {
-				printf("Expected number, got \"%s\"\n", alloc_name(t.start, t.end - t.start));
-				exit(1);
-			}
-			int live_frames = (t.whole * FRAMERATE + t.nume * FRAMERATE / t.denom);
-			struct ItemType *from_type;
-			struct ItemType *into_type;
+			int live_frames = (int)token_get_num(&curr, FRAMERATE);
+			ItemType from_type;
+			ItemType into_type;
 			if (into) {
 				from_type = &item_types[item_type_count - 1];
 				into_type = obj;
@@ -239,9 +257,64 @@ void parse_data() {
 			}
 			from_type->turns_into = into_type;
 			from_type->live_frames = live_frames;
+		} else if (token_cmp(t, "recipe")) {
+			if (recipe_count >= RECIPE_CAP) {
+				printf("Hit recipe capacity\n");
+				exit(1);
+			}
+			Recipe out = &recipes[recipe_count];
+			recipe_count += 1;
+			focus = PARSE_STATE_RECIPE;
+			token_get(&t, curr);
+			curr = t.end;
+			if (t.type != TOKEN_ALPHA) {
+				printf("Expected name after keyword \"recipe\"\n");
+				exit(1);
+			}
+			out->name = alloc_name(t.start, t.end - t.start);
+			out->duration = 0;
+			out->input_count = 0;
+			out->output_count = 0;
+		} else if (token_cmp(t, "duration")) {
+			if (focus != PARSE_STATE_RECIPE || recipe_count == 0) {
+				printf("Only recipes can have durations\n");
+				exit(1);
+			}
+			recipes[recipe_count - 1].duration = token_get_num(&curr, FRAMERATE);
+		} else if (token_cmp(t, "input")) {
+			if (focus != PARSE_STATE_RECIPE || recipe_count == 0) {
+				printf("Only recipes can have inputs\n");
+				exit(1);
+			}
+			Recipe out = &recipes[recipe_count - 1];
+			if (out->input_count == RECIPE_INPUT_CAP) {
+				printf("Hit input capacity (%d)\n", RECIPE_INPUT_CAP);
+				exit(1);
+			}
+			out->inputs[out->input_count] = token_get_item_type(&curr);
+			out->input_count += 1;
+		} else if (token_cmp(t, "output")) {
+			if (focus != PARSE_STATE_RECIPE || recipe_count == 0) {
+				printf("Only recipes can have outputs\n");
+				exit(1);
+			}
+			Recipe out = &recipes[recipe_count - 1];
+			if (out->output_count == RECIPE_INPUT_CAP) {
+				printf("Hit output capacity (%d)\n", RECIPE_INPUT_CAP);
+				exit(1);
+			}
+			out->outputs[out->output_count] = token_get_item_type(&curr);
+			out->output_count += 1;
+		} else {
+			printf("Unknown keyword %s\n", alloc_name(t.start, t.end - t.start));
+			exit(1);
 		}
 		token_get(&t, curr);
 		if (t.type != TOKEN_NONE) {
+			size_t len = strlen(t.start);
+			while (t.start[len-1] == '\r' || t.start[len-1] == '\n') {
+				len -= 1;
+			}
 			printf("Expected end of line, got \"%s\"\n", alloc_name(t.start, strlen(t.start)));
 			exit(1);
 		}
@@ -257,9 +330,7 @@ void parse_data() {
 const num DIM = DIM_CTIME;
 
 #define CHAR_CAP (IDIM * IDIM / 4)
-#define CHAR_INITIAL (IDIM * IDIM / 128)
-
-#define STARTING_TEAM_SIZE 10
+#define CHAR_INITIAL 10
 
 #define REACH (UNIT)
 #define MAX_HEALTH 60
@@ -269,7 +340,7 @@ size_t char_num = 0;
 struct Char {
 	num x, y;
 	// num velx, vely;
-	int deadframe;
+	// int deadframe;
 	// enum CharTask task;
 	// long held_item;
 } chars[CHAR_CAP];
@@ -282,7 +353,7 @@ struct Item {
 	num x, y;
 	// long held_by;
 	int change_frame;
-	struct ItemType *type;
+	ItemType type;
 } items[ITEM_CAP];
 
 size_t fixture_num = 0;
@@ -423,7 +494,6 @@ void init() {
 		const num RANGE = DIM * 7 / 8;
 		chars[i].x = rand_int(g) * RANGE / g;
 		chars[i].y = rand_int(g) * RANGE / g;
-		chars[i].deadframe = 120;
 		char_num++;
 		chunk_add_char(i);
 	}
@@ -486,33 +556,6 @@ void simulate() {
 	}
 	range (i, char_num) {
 		num vx = 0, vy = 0;
-		const size_t ci = get_chunk(chars[i].x);
-		const size_t cj = get_chunk(chars[i].y);
-
-		if (frame < chars[i].deadframe) {
-			ref nearest = find_nearest(chars[i].x, chars[i].y, AWARENESS, is_item);
-			if (nearest == -1) {
-				num x = chars[i].x;
-				num y = chars[i].y;
-				num scale = invsqrt_nr((x*x+y*y)/UNIT);
-				vx = -y*scale/UNIT/4;
-				vy =  x*scale/UNIT/4;
-			} else {
-				nearest &= REF_IND;
-				num dx = items[nearest].x - chars[i].x;
-				num dy = items[nearest].y - chars[i].y;
-				num qu = dx * dx + dy * dy;
-				if (qu < REACH * REACH) {
-					chunk_remove_item(nearest);
-					items[nearest].type = NULL;
-					chars[i].deadframe += 60;
-				} else {
-					num scale = invsqrt_nr(qu/UNIT);
-					vx = dx * scale / UNIT / 4;
-					vy = dy * scale / UNIT / 4;
-				}
-			}
-		}
 
 		{
 			chunk_remove_char(i);
@@ -604,7 +647,7 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 		float y = (float)items[i].y / (float)DIM;
 
 		float col[3] = {0.5f, 0.5f, 0.5f};
-		struct ItemType *type = items[i].type;
+		ItemType type = items[i].type;
 		if (type->color_initialized) {
 			col[0] = (float)type->color[0]/255.0f;
 			col[1] = (float)type->color[1]/255.0f;
@@ -630,9 +673,7 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 		float y = (float)chars[i].y / (float)DIM;
 
 		float col[3] = {0.5f, 0.5f, 0.5f};
-		if (frame < chars[i].deadframe) {
-			bright((float)(i % 12)*0.5f, col);
-		}
+		bright((float)(i % 12)*0.5f, col);
 		if (i / 12 % 2) {
 			col[0] *= 0.5f;
 			col[1] *= 0.5f;
@@ -669,6 +710,8 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 		ref nearest = find_nearest(x, y, MOUSE_RANGE, is_char);
 		if (nearest != -1) {
 			selected_char = nearest & REF_IND;
+		} else {
+			selected_char = -1;
 		}
 	} else if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_RIGHT) {
 	}
@@ -696,8 +739,6 @@ int main() {
 		frame++;
 		if (frame % 600 == 0) {
 			printf("reached frame %d (%d seconds)\n", frame, time(NULL)-start_time);
-			frame = 0;
-			init();
 		}
 
 		simulate();
