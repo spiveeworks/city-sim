@@ -74,13 +74,14 @@ void square(struct Vertex* vertex_data, size_t *total,
 size_t build_vertex_data(struct Vertex* vertex_data) {
 	size_t total = 0;
 	float dx = 0.95f/100.0f;
-	range (i, item_num) {
-		if (items[i].type == NULL || items[i].held_by != -1) continue;
-		float x = (float)items[i].x / (float)DIM;
-		float y = (float)items[i].y / (float)DIM;
+	range (i, fixture_count) {
+		Fixture fx = live_fixtures[i];
+		if (fx->storage_count == 0) { continue; }
+		float x = (float)fx->x / (float)DIM;
+		float y = (float)fx->y / (float)DIM;
 
 		float col[3] = {0.5f, 0.5f, 0.5f};
-		ItemType type = items[i].type;
+		ItemType type = fx->storage[0].type;
 		if (type->color_initialized) {
 			col[0] = (float)type->color[0]/255.0f;
 			col[1] = (float)type->color[1]/255.0f;
@@ -95,13 +96,7 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 		}
 		square(vertex_data, &total, x, y, dx, col[0], col[1], col[2]);
 	}
-	range (i, fixture_num) {
-		float x = (float)fixtures[i].x / (float)DIM;
-		float y = (float)fixtures[i].y / (float)DIM;
-
-		square(vertex_data, &total, x, y, dx, 0.5f, 0.5f, 0.5f);
-	}
-	range (i, char_num) {
+	range (i, char_count) {
 		float x = (float)chars[i].x / (float)DIM;
 		float y = (float)chars[i].y / (float)DIM;
 
