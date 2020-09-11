@@ -371,9 +371,18 @@ void simulate() {
 					long it = create_fixture(chars[i].x, chars[i].y, chars[i].held_item);
 					chars[i].held_item.type = NULL;
 					chars[i].held_item.change_frame = -1;
-					chars[i].inputs[chars[i].input_count] = it;
-					chars[i].input_count += 1;
-					chars[i].craft_t = frame + goal->duration;
+					bool stolen = false;
+					range (j, chars[i].input_count - 1) {
+						if (chars[i].inputs[j] == it) {
+							chars[i].input_count = j;
+							stolen = true;
+						}
+					}
+					if (!stolen) {
+						chars[i].inputs[chars[i].input_count] = it;
+						chars[i].input_count += 1;
+						chars[i].craft_t = frame + goal->duration;
+					}
 				} else {
 					num scale = invsqrt_nr(qu / UNIT);
 					vx = dx * scale / UNIT / 4;
