@@ -5,33 +5,6 @@
 
 int frame = 0;
 
-typedef int64_t num;
-#define UNIT_CTIME (1ull << 16)
-const num UNIT = UNIT_CTIME;
-
-// Newton-Raphson method of calculating 1/sqrt(x)
-// (calling it fast invsqrt would be a lie while I have a while loop)
-num invsqrt_nr(num x) {
-	if (!x) x = 1;
-	// scale^2 ~= UNIT / 2 ~= 1/sqrt(scrapqu)
-	num y = UNIT;
-	// @Performance count leading zeroes please
-	while (x*y/UNIT*y/UNIT > 3 * UNIT / 2) {
-		y = y * 5 / 7;
-	}
-	while (x*y/UNIT*y/UNIT < 2 * UNIT / 3) {
-		y = y * 7 / 5;
-	}
-	y = y * (UNIT * 3 / 2 - x*y/UNIT*y/UNIT/2)/UNIT;
-	y = y * (UNIT * 3 / 2 - x*y/UNIT*y/UNIT/2)/UNIT;
-	y = y * (UNIT * 3 / 2 - x*y/UNIT*y/UNIT/2)/UNIT;
-	if (x*y/UNIT*y/UNIT > 3 * UNIT / 2 || x*y/UNIT*y/UNIT < 2 * UNIT / 3) {
-		printf("invsqrt(%ld) = %ld\n", x, y);
-	}
-	return y;
-}
-
-
 // @Robustness why do large IDIM values cause a segfault?
 #define IDIM 200
 #define DIM_CTIME (UNIT_CTIME * IDIM)
@@ -67,16 +40,12 @@ struct Char {
 
 #define FIXTURE_CAP (IDIM * IDIM / 16)
 #define ITEM_INITIAL (IDIM * IDIM / 64)
-enum FixtureType {
-	FIXTURE_NULL,
-	FIXTURE_CLUTTER,
-};
 
 #define STORAGE_CAP 1
 
 struct Fixture {
 	num x, y;
-	enum FixtureType type;
+	FixtureType type;
 	int change_frame;
 	int storage_count;
 	struct Item storage[STORAGE_CAP];
@@ -195,7 +164,7 @@ size_t create_fixture(num x, num y, struct Item it) {
 void destroy_fixture(long fx_i) {
 	Fixture fx = &fixtures[fx_i];
 	chunk_remove_fixture(fx_i);
-	fx->type = FIXTURE_NULL;
+	fx->type = NULL;
 	size_t i = 0;
 	while (i < fixture_count && live_fixtures[i] < fx) {
 		i++;

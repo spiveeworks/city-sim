@@ -29,6 +29,18 @@ struct ItemType {
 size_t item_type_count = 0;
 typedef struct ItemType *ItemType;
 
+#define FIXTURE_TYPE_CAP 256
+struct FixtureType {
+	char *name;
+	num width;
+	num height;
+	bool passable;
+} fixture_types[FIXTURE_TYPE_CAP];
+size_t fixture_type_count = 0;
+typedef struct FixtureType *FixtureType;
+
+const FixtureType FIXTURE_CLUTTER = &fixture_types[0];
+
 #define RECIPE_CAP 256
 #define RECIPE_INPUT_CAP 8
 struct Recipe {
@@ -153,7 +165,17 @@ void parse_data() {
 		PARSE_STATE_RECIPE,
 	} focus = PARSE_STATE_NULL;
 	item_type_count = 0;
-	// recipe_count = 0;
+	recipe_count = 0;
+
+	fixture_type_count = 1;
+	if (FIXTURE_CLUTTER - fixture_types >= fixture_type_count) {
+		printf("FIXTURE_CLUTTER initialized to bad value\n");
+		exit(1);
+	}
+	FIXTURE_CLUTTER->name = "clutter";
+	FIXTURE_CLUTTER->width = 2 * UNIT;
+	FIXTURE_CLUTTER->height = 2 * UNIT;
+	FIXTURE_CLUTTER->passable = true;
 
 	while (feof(f) == 0) {
 		const int STR_CAP = 256;

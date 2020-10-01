@@ -13,3 +13,29 @@
 #define min(x, y) ((x) <= (y) ? (x) : (y))
 #define max(x, y) ((x) >= (y) ? (x) : (y))
 
+typedef int64_t num;
+#define UNIT_CTIME (1ULL << 16U)
+const num UNIT = UNIT_CTIME;
+
+// Newton-Raphson method of calculating 1/sqrt(x)
+// (calling it fast invsqrt would be a lie while I have a while loop)
+num invsqrt_nr(num x) {
+	if (!x) x = 1;
+	// scale^2 ~= UNIT / 2 ~= 1/sqrt(scrapqu)
+	num y = UNIT;
+	// @Performance count leading zeroes please
+	while (x*y/UNIT*y/UNIT > 3 * UNIT / 2) {
+		y = y * 5 / 7;
+	}
+	while (x*y/UNIT*y/UNIT < 2 * UNIT / 3) {
+		y = y * 7 / 5;
+	}
+	y = y * (UNIT * 3 / 2 - x*y/UNIT*y/UNIT/2)/UNIT;
+	y = y * (UNIT * 3 / 2 - x*y/UNIT*y/UNIT/2)/UNIT;
+	y = y * (UNIT * 3 / 2 - x*y/UNIT*y/UNIT/2)/UNIT;
+	if (x*y/UNIT*y/UNIT > 3 * UNIT / 2 || x*y/UNIT*y/UNIT < 2 * UNIT / 3) {
+		printf("invsqrt(%ld) = %ld\n", x, y);
+	}
+	return y;
+}
+

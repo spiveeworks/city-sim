@@ -49,18 +49,18 @@ void circle(struct Vertex* vertex_data, size_t *total,
 	vertex_data[(*total)++] = vs[0][1];
 }
 
-void square(struct Vertex* vertex_data, size_t *total,
-	float x, float y, float dx, float r, float g, float b)
+void rect(struct Vertex* vertex_data, size_t *total,
+	float x, float y, float dx, float dy, float r, float g, float b)
 {
 	struct Vertex vs[2][2] =
 	{
 		{
-			{{x-dx, y-dx}, {r, g, b}, {0.0f, 0.0f}},
-			{{x+dx, y-dx}, {r, g, b}, {0.0f, 0.0f}}
+			{{x-dx, y-dy}, {r, g, b}, {0.0f, 0.0f}},
+			{{x+dx, y-dy}, {r, g, b}, {0.0f, 0.0f}}
 		},
 		{
-			{{x-dx, y+dx}, {r, g, b}, {0.0f, 0.0f}},
-			{{x+dx, y+dx}, {r, g, b}, {0.0f, 0.0f}}
+			{{x-dx, y+dy}, {r, g, b}, {0.0f, 0.0f}},
+			{{x+dx, y+dy}, {r, g, b}, {0.0f, 0.0f}}
 		}
 	};
 	vertex_data[(*total)++] = vs[0][0];
@@ -73,12 +73,13 @@ void square(struct Vertex* vertex_data, size_t *total,
 
 size_t build_vertex_data(struct Vertex* vertex_data) {
 	size_t total = 0;
-	float dx = 0.95f/100.0f;
 	range (i, fixture_count) {
 		Fixture fx = live_fixtures[i];
 		if (fx->storage_count == 0) { continue; }
 		float x = (float)fx->x / (float)DIM;
 		float y = (float)fx->y / (float)DIM;
+		float dx = (float)fx->type->width/2 / (float)DIM;
+		float dy = (float)fx->type->height/2 / (float)DIM;
 
 		float col[3] = {0.5f, 0.5f, 0.5f};
 		ItemType type = fx->storage[0].type;
@@ -94,8 +95,9 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 				col[2] *= 0.5f;
 			}
 		}
-		square(vertex_data, &total, x, y, dx, col[0], col[1], col[2]);
+		rect(vertex_data, &total, x, y, dx, dy, col[0], col[1], col[2]);
 	}
+	float dx = 0.95f/100.0f;
 	range (i, char_count) {
 		float x = (float)chars[i].x / (float)DIM;
 		float y = (float)chars[i].y / (float)DIM;
