@@ -2,6 +2,7 @@
 
 #include "util.h"
 #include "data.h"
+#include "nav.h"
 
 int frame = 0;
 

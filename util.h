@@ -16,6 +16,7 @@
 typedef int64_t num;
 #define UNIT_CTIME (1ULL << 16U)
 const num UNIT = UNIT_CTIME;
+const num NUM_GREATEST = INT64_MAX;
 
 // Newton-Raphson method of calculating 1/sqrt(x)
 // (calling it fast invsqrt would be a lie while I have a while loop)
@@ -37,5 +38,10 @@ num invsqrt_nr(num x) {
 		printf("invsqrt(%ld) = %ld\n", x, y);
 	}
 	return y;
+}
+
+num num_hypot(num x, num y) {
+	num qu = (x*x + y*y)/UNIT;
+	return qu * invsqrt_nr(qu) / UNIT;
 }
 
