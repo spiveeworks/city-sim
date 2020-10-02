@@ -27,8 +27,6 @@ typedef struct Item *Item;
 size_t char_count = 0;
 
 struct Char {
-	num x, y;
-	// num velx, vely;
 	// int deadframe;
 	Recipe goal;
 	num craft_x, craft_y;
@@ -36,6 +34,13 @@ struct Char {
 	uint8_t input_count;
 	long inputs[RECIPE_INPUT_CAP];
 	struct Item held_item;
+
+	num x, y;
+	num velx, vely;
+	nav next_nav;
+	long next_nav_frame;
+	nav end_nav;
+	num endx, endy;
 } chars[CHAR_CAP];
 
 
@@ -205,6 +210,15 @@ void init() {
 		const num RANGE = DIM - 1;
 		chars[i].x = rand_int(g) * RANGE / g;
 		chars[i].y = rand_int(g) * RANGE / g;
+
+		chars[i].velx = 0;
+		chars[i].vely = 0;
+		chars[i].next_nav.i = ~0U;
+		chars[i].end_nav.i = ~0U;
+		chars[i].next_nav_frame = frame + 1;
+		chars[i].endx = -5*UNIT;
+		chars[i].endy = -5*UNIT;
+
 		chars[i].held_item.type = NULL;
 		chars[i].input_count = 0;
 		chars[i].goal = &recipes[i % recipe_count];
@@ -291,6 +305,82 @@ void simulate() {
 			it->type = into;
 		}
 	}
+
+	range (i, char_count) {
+		chars[i].x += chars[i].velx;
+		chars[i].y += chars[i].vely;
+		// @Performance try splitting this loop? no point while char_count
+		// is so small
+		if (chars[i].next_nav_frame >= 0 && frame >= chars[i].next_nav_frame) {
+			num nextx;
+			num nexty;
+			size_t curr = chars[i].next_nav.i;
+			size_t end = chars[i].end_nav.i;
+			if (curr == ~0U || end == ~0U) {
+				if (curr != ~0U) {
+					printf("ERROR: end nav node was undefined but curr was not\n");
+					exit(1);
+				}
+				if (end != ~0U) {
+					printf("ERROR: curr nav node was undefined but end was not\n");
+					exit(1);
+				}
+				if (chars[i].velx == 0 && chars[i].vely == 0) {
+					if (chars[i].x == chars[i].endx && chars[i].y == chars[i].endy) {
+						chars[i].next_nav_frame = -1;
+						continue;
+					}
+					if (interval_obstructed(chars[i].x, chars[i].y, chars[i].endx, chars[i].endy)) {
+						pick_route(
+							chars[i].x, chars[i].y, chars[i].endx, chars[i].endy,
+							&chars[i].next_nav, &chars[i].end_nav
+						);
+						size_t next = chars[i].next_nav.i;
+						if (next == ~0U) {
+							chars[i].next_nav_frame = -1;
+						} else {
+							nextx = nav_nodes[next].x;
+							nexty = nav_nodes[next].y;
+						}
+					} else {
+						nextx = chars[i].endx;
+						nexty = chars[i].endy;
+					}
+				} else {
+					chars[i].endx = chars[i].x;
+					chars[i].endy = chars[i].y;
+					chars[i].velx = 0;
+					chars[i].vely = 0;
+					chars[i].next_nav_frame = ~0U;
+					continue;
+				}
+			} else if (curr == end) {
+				nextx = chars[i].endx;
+				nexty = chars[i].endy;
+				chars[i].next_nav.i = ~0U;
+				chars[i].end_nav.i = ~0U;
+			} else {
+				chars[i].x = nav_nodes[curr].x;
+				chars[i].y = nav_nodes[curr].y;
+				nav next = curr < end ?
+					nav_paths[(end*end-end)/2+curr].next :
+					nav_paths[(curr*curr-curr)/2+end].prev;
+				chars[i].next_nav = next;
+				nextx = nav_nodes[next.i].x;
+				nexty = nav_nodes[next.i].y;
+			}
+			num dx = nextx - chars[i].x;
+			num dy = nexty - chars[i].y;
+			num qu = (dx*dx+dy*dy)/UNIT;
+			num scale = invsqrt_nr(qu);
+			num dist = qu*scale/UNIT;
+			const num SPEED = UNIT/4;
+			chars[i].velx = dx*scale/UNIT*SPEED/UNIT;
+			chars[i].vely = dy*scale/UNIT*SPEED/UNIT;
+			chars[i].next_nav_frame = frame + dist / SPEED;
+		}
+	}
+
 	range (i, fixture_count) {
 		Fixture fx = live_fixtures[i];
 		range (j, fx->storage_count) {
@@ -315,6 +405,7 @@ void simulate() {
 			i -= 1;
 		}
 	}
+	/*
 	range (i, char_count) {
 		num vx = 0, vy = 0;
 
@@ -457,5 +548,6 @@ void simulate() {
 			chunk_add_char(i);
 		}
 	}
+	*/
 }
 
