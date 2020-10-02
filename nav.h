@@ -110,9 +110,18 @@ void initialize_nav_edges() {
 	obstacles[obstacle_count].b = 0*UNIT;
 	obstacles[obstacle_count].t = 10*UNIT;
 	obstacle_count += 1;
+	obstacles[obstacle_count].l = -50*UNIT;
+	obstacles[obstacle_count].r = 0*UNIT;
+	obstacles[obstacle_count].b = 100*UNIT;
+	obstacles[obstacle_count].t = 150*UNIT;
+	obstacle_count += 1;
 
 
 	nav_node_count = obstacle_count * 4;
+	if (nav_node_count > NAV_NODE_CAP) {
+		printf("ERROR: Nav node capacity is too small\n");
+		exit(1);
+	}
 	range(i, obstacle_count) {
 		nav_nodes[4*i+0].x = obstacles[i].r;
 		nav_nodes[4*i+0].y = obstacles[i].t;
@@ -196,7 +205,7 @@ void pick_route(
 	size_t start_i[start_clear_count];
 	num start_dist[start_clear_count];
 	size_t start_dist_init_count = 0;
-	size_t end_i[start_clear_count];
+	size_t end_i[end_clear_count];
 	num end_dist[end_clear_count];
 	size_t end_dist_init_count = 0;
 	range (i, nav_node_count) {
@@ -220,14 +229,18 @@ void pick_route(
 		size_t i = start_i[i0];
 		range (j0, end_clear_count) {
 			size_t j = end_i[j0];
-			size_t ind = i < j ? (j*j-j)/2+i : (i*i-i)/2+j;
+			num path_dist = 0;
+			if (i != j) {
+				size_t ind = i < j ? (j*j-j)/2+i : (i*i-i)/2+j;
+				path_dist = nav_paths[ind].distance;
+			}
 			num dist = NUM_GREATEST;
 			if (
 				start_dist[i0] < NUM_GREATEST &&
-				nav_paths[ind].distance < NUM_GREATEST &&
+				path_dist < NUM_GREATEST &&
 				end_dist[j0] < NUM_GREATEST
 			) {
-				dist = start_dist[i0] + nav_paths[ind].distance + end_dist[j0];
+				dist = start_dist[i0] + path_dist + end_dist[j0];
 			}
 			if (dist < min_dist) {
 				startnode->i = i;
