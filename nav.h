@@ -30,49 +30,50 @@ bool rect_intersects_interval(
 	num l, num r, num b, num t,
 	num x0, num y0, num x1, num y1
 ) {
-	// is the interval incident with the _extension_ of the edges
-	bool lline = (x0 < l && l < x1) || (x1 < l && l < x0);
-	bool rline = (x0 < r && r < x1) || (x1 < r && r < x0);
-	bool bline = (y0 < b && b < y1) || (y1 < b && b < y0);
-	bool tline = (y0 < t && t < y1) || (y1 < t && t < y0);
+	// If line doesnt touch polygon, then interval doesnt touch polygon
+	// on the other hand if line touches polygon then its intersection with the
+	// polygon will be another interval, specifically the intersection of two
+	// half planes with the line
+	// if the actual interval doesn't touch this intersection area then it must
+	// be fully outside one of the half planes
+	//
+	// this lets us separate the test into two completely separate parts, one
+	// based on the interval sitting outside any half plane, and the other
+	// based on whether its extension to a line passes through the polygon
+	if (x0 <= l && x1 <= l) { return false; }
+	if (x0 >= r && x1 >= r) { return false; }
+	if (y0 <= b && y1 <= b) { return false; }
+	if (y0 >= t && y1 >= t) { return false; }
 
 	num dx = x1 - x0;
 	num dy = y1 - y0;
 
-	num bx, tx, ly, ry;
+	if (dx == 0 || dy == 0) {
+		// the previous test is sufficient for axis aligned intervals
+		return true;
+	}
 
 	// recall points on line will satisfy
 	// (x - x0)(y1 - y0) = (y - y0)(x1 - x0)
 	// avoid expanding brackets, to prevent overflow
 	// x = x0 + (y - y0)(x1 - x0)/(y1 - y0)
 	// y = y0 + (x - x0)(y1 - y0)/(x1 - x0)
-	if (dy != 0) {
-		bx = x0 + (b - y0)*dx/dy;
-		tx = x0 + (t - y0)*dx/dy;
-		if (bline && l < bx && bx < r) { return true; }
-		if (tline && l < tx && tx < r) { return true; }
-	}
-	if (dx != 0) {
-		ly = y0 + (l - x0)*dy/dx;
-		ry = y0 + (r - x0)*dy/dx;
-		if (lline && b < ly && ly < t) { return true; }
-		if (rline && b < ry && ry < t) { return true; }
-	}
+	num bx = x0 + (b - y0)*dx/dy;
+	num tx = x0 + (t - y0)*dx/dy;
+	num ly = y0 + (l - x0)*dy/dx;
+	num ry = y0 + (r - x0)*dy/dx;
 
-	// edge case for passing through the corner of a rectangle, since this will
-	// appear to 'glance' both edges
-	// this test also makes us much more robust to numerical error since this
-	// test doesn't care at all where the intersection is relative to the
-	// corner being glanced, only where it is relative to the opposite sides of
-	// the rectangle
-	if (dx != 0 && dy != 0) {
-		if (lline && bline && dx * dy > 0 && ly < t && bx < r) { return true; }
-		if (rline && bline && dx * dy < 0 && ry < t && bx > l) { return true; }
-		if (lline && tline && dx * dy < 0 && ly > b && tx < r) { return true; }
-		if (rline && tline && dx * dy > 0 && ry > b && tx > l) { return true; }
+	// a positive gradient line will miss the rectangle if and only if
+	// it passes through the rays extending from either the top left or bottom
+	// right corner
+	// we test for these miss regions because that way we leave no place to
+	// squeak through, whereas if we test the edges of the rectangle directly
+	// then the corner of the rectangle becomes difficult to detect
+	if (dx * dy > 0) {
+		return !((ly >= t && tx <= l) || (ry <= b && bx >= r));
+	} else {
+		return !((ry >= t && tx >= r) || (ly <= b && bx <= l));
 	}
-
-	return false;
 }
 
 void initialize_nav_edges() {
