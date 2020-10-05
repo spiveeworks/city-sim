@@ -186,6 +186,8 @@ void destroy_fixture(long fx_i) {
 	}
 }
 
+#define OBSTACLE_INITIAL 60
+
 void init() {
 	fixture_count = 0;
 	char_count = 0;
@@ -197,6 +199,27 @@ void init() {
 			}
 		}
 	}
+
+	obstacle_count = 0;
+
+	range (i, OBSTACLE_INITIAL) {
+		const int g = 1000; // granularity of randomness
+		const num RANGE = DIM - 1;
+		const num WIDTH_RANGE = 20 * UNIT;
+		num x = rand_int(g) * RANGE / g;
+		num y = rand_int(g) * RANGE / g;
+		num dx = rand() % g * WIDTH_RANGE / g;
+		num dy = rand() % g * WIDTH_RANGE / g;
+		obstacles[i].l = x - dx;
+		obstacles[i].r = x + dx;
+		obstacles[i].b = y - dy;
+		obstacles[i].t = y + dy;
+		obstacle_count += 1;
+	}
+
+	initialize_nav_edges();
+
+	/*
 	range (i, ITEM_INITIAL) {
 		const int g = 1000; // granularity of randomness
 		const num RANGE = DIM - 1;
@@ -205,19 +228,38 @@ void init() {
 		it.change_frame = it.type->live_frames;
 		create_fixture(rand_int(g) * RANGE / g, rand_int(g) * RANGE / g, it);
 	}
+	*/
 	range (i, CHAR_INITIAL) {
-		const int g = 1000; // granularity of randomness
-		const num RANGE = DIM - 1;
-		chars[i].x = rand_int(g) * RANGE / g;
-		chars[i].y = rand_int(g) * RANGE / g;
+		bool done = false;
+		while (!done) {
+			const int g = 1000; // granularity of randomness
+			const num RANGE = DIM - 1;
+			num x = rand_int(g) * RANGE / g;
+			num y = rand_int(g) * RANGE / g;
+			chars[i].x = x;
+			chars[i].y = y;
+			done = true;
+			range(o, obstacle_count) {
+				if (obstacles[o].l < x && x < obstacles[o].r &&
+						obstacles[o].b < y && y < obstacles[o].t
+				) {
+					done = false;
+				}
+			}
+		}
 
 		chars[i].velx = 0;
 		chars[i].vely = 0;
 		chars[i].next_nav.i = ~0U;
 		chars[i].end_nav.i = ~0U;
 		chars[i].next_nav_frame = frame + 1;
-		chars[i].endx = -5*UNIT;
-		chars[i].endy = -5*UNIT;
+		if (i > 0) {
+			chars[i].endx = chars[i - 1].x;
+			chars[i].endy = chars[i - 1].y;
+		} else {
+			chars[i].endx = 0;
+			chars[i].endy = 0;
+		}
 
 		chars[i].held_item.type = NULL;
 		chars[i].input_count = 0;

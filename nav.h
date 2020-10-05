@@ -94,29 +94,6 @@ bool interval_obstructed(
 }
 
 void initialize_nav_edges() {
-	// just hardcode the rectangles while we get the nav system working
-	obstacles[obstacle_count].l = -100*UNIT;
-	obstacles[obstacle_count].r = -50*UNIT;
-	obstacles[obstacle_count].b = -50*UNIT;
-	obstacles[obstacle_count].t = 0*UNIT;
-	obstacle_count += 1;
-	obstacles[obstacle_count].l = 50*UNIT;
-	obstacles[obstacle_count].r = 100*UNIT;
-	obstacles[obstacle_count].b = 10*UNIT;
-	obstacles[obstacle_count].t = 60*UNIT;
-	obstacle_count += 1;
-	obstacles[obstacle_count].l = 0*UNIT;
-	obstacles[obstacle_count].r = 10*UNIT;
-	obstacles[obstacle_count].b = 0*UNIT;
-	obstacles[obstacle_count].t = 10*UNIT;
-	obstacle_count += 1;
-	obstacles[obstacle_count].l = -50*UNIT;
-	obstacles[obstacle_count].r = 0*UNIT;
-	obstacles[obstacle_count].b = 100*UNIT;
-	obstacles[obstacle_count].t = 150*UNIT;
-	obstacle_count += 1;
-
-
 	nav_node_count = obstacle_count * 4;
 	if (nav_node_count > NAV_NODE_CAP) {
 		printf("ERROR: Nav node capacity is too small\n");
@@ -218,7 +195,7 @@ void pick_route(
 		if (end_clear[i]) {
 			end_i[end_dist_init_count] = i;
 			end_dist[end_dist_init_count] =
-				num_hypot(endy - nav_nodes[i].x, endy - nav_nodes[i].y);
+				num_hypot(endx - nav_nodes[i].x, endy - nav_nodes[i].y);
 			end_dist_init_count += 1;
 		}
 	}
