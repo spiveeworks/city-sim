@@ -93,21 +93,27 @@ bool interval_obstructed(
 	return false;
 }
 
-void initialize_nav_edges() {
-	nav_node_count = obstacle_count * 4;
-	if (nav_node_count > NAV_NODE_CAP) {
+void initialize_nav_edges(num world_l, num world_r, num world_b, num world_t) {
+	if (obstacle_count * 4 > NAV_NODE_CAP) {
 		printf("ERROR: Nav node capacity is too small\n");
 		exit(1);
 	}
+	nav_node_count = 0;
 	range(i, obstacle_count) {
-		nav_nodes[4*i+0].x = obstacles[i].r;
-		nav_nodes[4*i+0].y = obstacles[i].t;
-		nav_nodes[4*i+1].x = obstacles[i].l;
-		nav_nodes[4*i+1].y = obstacles[i].t;
-		nav_nodes[4*i+2].x = obstacles[i].l;
-		nav_nodes[4*i+2].y = obstacles[i].b;
-		nav_nodes[4*i+3].x = obstacles[i].r;
-		nav_nodes[4*i+3].y = obstacles[i].b;
+		num l = obstacles[i].l;
+		num r = obstacles[i].r;
+		num b = obstacles[i].b;
+		num t = obstacles[i].t;
+		num vs[4][2] = {{r, t}, {l, t}, {l, b}, {r, b}};
+		range(j, 4) {
+			num x = vs[j][0];
+			num y = vs[j][1];
+			if (world_l < x && x < world_r && world_b < y && y < world_t) {
+				nav_nodes[nav_node_count].x = x;
+				nav_nodes[nav_node_count].y = y;
+				nav_node_count += 1;
+			}
+		}
 	}
 	size_t path_count = nav_node_count * (nav_node_count - 1) / 2;
 	range(ind, path_count) {

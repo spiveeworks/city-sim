@@ -7,7 +7,7 @@
 int frame = 0;
 
 // @Robustness why do large IDIM values cause a segfault?
-#define IDIM 200
+#define IDIM 50
 #define DIM_CTIME (UNIT_CTIME * IDIM)
 const num DIM = DIM_CTIME;
 
@@ -19,7 +19,8 @@ typedef struct Item *Item;
 
 
 #define CHAR_CAP (IDIM * IDIM / 4)
-#define CHAR_INITIAL (IDIM * IDIM / 512)
+//#define CHAR_INITIAL (IDIM * IDIM / 512)
+#define CHAR_INITIAL 20
 
 #define REACH (UNIT)
 #define MAX_HEALTH 60
@@ -228,11 +229,11 @@ void init() {
 		const num RANGE = DIM/20;
 		num x = -DIM + i%10*2*SPACING + rand_int(g)*RANGE/g;
 		num y = -DIM + i*2*DIM/OBSTACLE_INITIAL + rand_int(g)*RANGE/g;
-		num dx = 1*UNIT;
-		num dy = 20*UNIT;
+		num dx = DIM / 100;
+		num dy = DIM / 5;
 		if (rand() % 2) {
-			dx = 20*UNIT;
-			dy = 1*UNIT;
+			dx = DIM / 5;
+			dy = DIM / 100;
 		}
 		obstacles[i].l = x - dx;
 		obstacles[i].r = x + dx;
@@ -241,7 +242,7 @@ void init() {
 		obstacle_count += 1;
 	}
 
-	initialize_nav_edges();
+	initialize_nav_edges(-DIM, DIM, -DIM, DIM);
 
 	range (i, ITEM_INITIAL) {
 		const int g = 1000; // granularity of randomness
@@ -601,12 +602,12 @@ void simulate() {
 			chunk_remove_char(i);
 			if (newx >= DIM) {
 				newx = DIM-1;
-			} else if (chars[i].x <= -DIM) {
+			} else if (newx <= -DIM) {
 				newx = -DIM+1;
 			}
 			if (newy >= DIM) {
 				newy = DIM-1;
-			} else if (chars[i].y <= -DIM) {
+			} else if (newy <= -DIM) {
 				newy = -DIM+1;
 			}
 		}
