@@ -226,7 +226,6 @@ int main() {
 
 		frame++;
 		if (frame % 600 == 0) {
-			init();
 			printf("reached frame %d (%d seconds)\n", frame, time(NULL)-start_time);
 		}
 

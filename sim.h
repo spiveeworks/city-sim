@@ -19,7 +19,7 @@ typedef struct Item *Item;
 
 
 #define CHAR_CAP (IDIM * IDIM / 4)
-#define CHAR_INITIAL (IDIM * IDIM / 1024)
+#define CHAR_INITIAL (IDIM * IDIM / 512)
 
 #define REACH (UNIT)
 #define MAX_HEALTH 60
@@ -186,7 +186,27 @@ void destroy_fixture(long fx_i) {
 	}
 }
 
-#define OBSTACLE_INITIAL 60
+void rand_pos_in_space(num *out_x, num *out_y) {
+	bool done = false;
+	while (!done) {
+		const int g = 1000; // granularity of randomness
+		const num RANGE = DIM - 1;
+		num x = rand_int(g) * RANGE / g;
+		num y = rand_int(g) * RANGE / g;
+		*out_x = x;
+		*out_y = y;
+		done = true;
+		range(o, obstacle_count) {
+			if (obstacles[o].l < x && x < obstacles[o].r &&
+					obstacles[o].b < y && y < obstacles[o].t
+			) {
+				done = false;
+			}
+		}
+	}
+}
+
+#define OBSTACLE_INITIAL 100
 
 void init() {
 	fixture_count = 0;
@@ -204,12 +224,16 @@ void init() {
 
 	range (i, OBSTACLE_INITIAL) {
 		const int g = 1000; // granularity of randomness
-		const num RANGE = DIM - 1;
-		const num WIDTH_RANGE = 20 * UNIT;
-		num x = rand_int(g) * RANGE / g;
-		num y = rand_int(g) * RANGE / g;
-		num dx = rand() % g * WIDTH_RANGE / g;
-		num dy = rand() % g * WIDTH_RANGE / g;
+		const num SPACING = DIM/10;
+		const num RANGE = DIM/20;
+		num x = -DIM + i%10*2*SPACING + rand_int(g)*RANGE/g;
+		num y = -DIM + i*2*DIM/OBSTACLE_INITIAL + rand_int(g)*RANGE/g;
+		num dx = 1*UNIT;
+		num dy = 20*UNIT;
+		if (rand() % 2) {
+			dx = 20*UNIT;
+			dy = 1*UNIT;
+		}
 		obstacles[i].l = x - dx;
 		obstacles[i].r = x + dx;
 		obstacles[i].b = y - dy;
@@ -219,47 +243,26 @@ void init() {
 
 	initialize_nav_edges();
 
-	/*
 	range (i, ITEM_INITIAL) {
 		const int g = 1000; // granularity of randomness
 		const num RANGE = DIM - 1;
 		struct Item it;
 		it.type = &item_types[i % item_type_count];
 		it.change_frame = it.type->live_frames;
-		create_fixture(rand_int(g) * RANGE / g, rand_int(g) * RANGE / g, it);
+		num x, y;
+		rand_pos_in_space(&x, &y);
+		create_fixture(x, y, it);
 	}
-	*/
 	range (i, CHAR_INITIAL) {
-		bool done = false;
-		while (!done) {
-			const int g = 1000; // granularity of randomness
-			const num RANGE = DIM - 1;
-			num x = rand_int(g) * RANGE / g;
-			num y = rand_int(g) * RANGE / g;
-			chars[i].x = x;
-			chars[i].y = y;
-			done = true;
-			range(o, obstacle_count) {
-				if (obstacles[o].l < x && x < obstacles[o].r &&
-						obstacles[o].b < y && y < obstacles[o].t
-				) {
-					done = false;
-				}
-			}
-		}
+		rand_pos_in_space(&chars[i].x, &chars[i].y);
 
 		chars[i].velx = 0;
 		chars[i].vely = 0;
 		chars[i].next_nav.i = ~0U;
 		chars[i].end_nav.i = ~0U;
-		chars[i].next_nav_frame = frame + 1;
-		if (i > 0) {
-			chars[i].endx = chars[i - 1].x;
-			chars[i].endy = chars[i - 1].y;
-		} else {
-			chars[i].endx = 0;
-			chars[i].endy = 0;
-		}
+		chars[i].next_nav_frame = -1;
+		chars[i].endx = chars[i].x;
+		chars[i].endy = chars[i].y;
 
 		chars[i].held_item.type = NULL;
 		chars[i].input_count = 0;
@@ -334,6 +337,7 @@ bool is_valid_input(ref x) {
 }
 
 void simulate() {
+	// item evolution
 	range (i, char_count) {
 		Item it = &chars[i].held_item;
 		if (it->type != NULL && 0 <= it->change_frame && it->change_frame <= frame)
@@ -347,82 +351,6 @@ void simulate() {
 			it->type = into;
 		}
 	}
-
-	range (i, char_count) {
-		chars[i].x += chars[i].velx;
-		chars[i].y += chars[i].vely;
-		// @Performance try splitting this loop? no point while char_count
-		// is so small
-		if (chars[i].next_nav_frame >= 0 && frame >= chars[i].next_nav_frame) {
-			num nextx;
-			num nexty;
-			size_t curr = chars[i].next_nav.i;
-			size_t end = chars[i].end_nav.i;
-			if (curr == ~0U || end == ~0U) {
-				if (curr != ~0U) {
-					printf("ERROR: end nav node was undefined but curr was not\n");
-					exit(1);
-				}
-				if (end != ~0U) {
-					printf("ERROR: curr nav node was undefined but end was not\n");
-					exit(1);
-				}
-				if (chars[i].velx == 0 && chars[i].vely == 0) {
-					if (chars[i].x == chars[i].endx && chars[i].y == chars[i].endy) {
-						chars[i].next_nav_frame = -1;
-						continue;
-					}
-					if (interval_obstructed(chars[i].x, chars[i].y, chars[i].endx, chars[i].endy)) {
-						pick_route(
-							chars[i].x, chars[i].y, chars[i].endx, chars[i].endy,
-							&chars[i].next_nav, &chars[i].end_nav
-						);
-						size_t next = chars[i].next_nav.i;
-						if (next == ~0U) {
-							chars[i].next_nav_frame = -1;
-						} else {
-							nextx = nav_nodes[next].x;
-							nexty = nav_nodes[next].y;
-						}
-					} else {
-						nextx = chars[i].endx;
-						nexty = chars[i].endy;
-					}
-				} else {
-					chars[i].endx = chars[i].x;
-					chars[i].endy = chars[i].y;
-					chars[i].velx = 0;
-					chars[i].vely = 0;
-					chars[i].next_nav_frame = ~0U;
-					continue;
-				}
-			} else if (curr == end) {
-				nextx = chars[i].endx;
-				nexty = chars[i].endy;
-				chars[i].next_nav.i = ~0U;
-				chars[i].end_nav.i = ~0U;
-			} else {
-				chars[i].x = nav_nodes[curr].x;
-				chars[i].y = nav_nodes[curr].y;
-				nav next = curr < end ?
-					nav_paths[(end*end-end)/2+curr].next :
-					nav_paths[(curr*curr-curr)/2+end].prev;
-				chars[i].next_nav = next;
-				nextx = nav_nodes[next.i].x;
-				nexty = nav_nodes[next.i].y;
-			}
-			num dx = nextx - chars[i].x;
-			num dy = nexty - chars[i].y;
-			num qu = (dx*dx+dy*dy)/UNIT;
-			num scale = invsqrt_nr(qu);
-			num dist = qu*scale/UNIT;
-			const num SPEED = UNIT/4;
-			chars[i].velx = dx*scale/UNIT*SPEED/UNIT;
-			chars[i].vely = dy*scale/UNIT*SPEED/UNIT;
-			chars[i].next_nav_frame = frame + dist / SPEED;
-		}
-	}
-
 	range (i, fixture_count) {
 		Fixture fx = live_fixtures[i];
 		range (j, fx->storage_count) {
@@ -447,10 +375,16 @@ void simulate() {
 			i -= 1;
 		}
 	}
-	/*
-	range (i, char_count) {
-		num vx = 0, vy = 0;
 
+	// decision making
+	range (i, char_count) {
+		// only make decisions when not currently walking somewhere
+		// @Polish keep track of target item to see if goal has been
+		// undermined? eventually there will be explicit rules for tracking and
+		// locating though, maybe just keep it as is until then
+		if (chars[i].next_nav_frame >= 0) {
+			continue;
+		}
 		Recipe goal = chars[i].goal;
 		if (goal == NULL) {
 			continue;
@@ -487,9 +421,9 @@ void simulate() {
 						chars[i].craft_t = frame + goal->duration;
 					}
 				} else {
-					num scale = invsqrt_nr(qu / UNIT);
-					vx = dx * scale / UNIT / 4;
-					vy = dy * scale / UNIT / 4;
+					chars[i].endx = chars[i].craft_x;
+					chars[i].endy = chars[i].craft_y;
+					chars[i].next_nav_frame = frame;
 				}
 			}
 		} else if (chars[i].input_count < goal->input_count) {
@@ -531,9 +465,9 @@ void simulate() {
 					}
 				}
 			} else {
-				num scale = invsqrt_nr(qu / UNIT);
-				vx = dx * scale / UNIT / 4;
-				vy = dy * scale / UNIT / 4;
+				chars[i].endx = fixtures[target].x;
+				chars[i].endy = fixtures[target].y;
+				chars[i].next_nav_frame = frame;
 			}
 		} else {
 			bool stolen = false;
@@ -572,24 +506,115 @@ void simulate() {
 				}
 			}
 		}
+	}
 
-		{
+	// navigation
+	range (i, char_count) {
+		if (chars[i].next_nav_frame < 0 || frame < chars[i].next_nav_frame) {
+			continue;
+		}
+		bool nextpos_chosen = false;
+		num nextx;
+		num nexty;
+		size_t curr = chars[i].next_nav.i;
+		size_t end = chars[i].end_nav.i;
+		if (curr == ~0U || end == ~0U) {
+			if (curr != ~0U) {
+				printf("ERROR: end nav node was undefined but curr was not\n");
+				exit(1);
+			}
+			if (end != ~0U) {
+				printf("ERROR: curr nav node was undefined but end was not\n");
+				exit(1);
+			}
+			if (chars[i].velx == 0 && chars[i].vely == 0) {
+				if (chars[i].x == chars[i].endx && chars[i].y == chars[i].endy) {
+					chars[i].next_nav_frame = -1;
+					continue;
+				}
+				if (interval_obstructed(chars[i].x, chars[i].y, chars[i].endx, chars[i].endy)) {
+					pick_route(
+						chars[i].x, chars[i].y, chars[i].endx, chars[i].endy,
+						&chars[i].next_nav, &chars[i].end_nav
+					);
+					size_t next = chars[i].next_nav.i;
+					if (next == ~0U) {
+						chars[i].next_nav_frame = -1;
+					} else {
+						nextx = nav_nodes[next].x;
+						nexty = nav_nodes[next].y;
+						nextpos_chosen = true;
+					}
+				} else {
+					nextx = chars[i].endx;
+					nexty = chars[i].endy;
+					nextpos_chosen = true;
+				}
+			} else {
+				chars[i].endx = chars[i].x;
+				chars[i].endy = chars[i].y;
+				chars[i].velx = 0;
+				chars[i].vely = 0;
+				chars[i].next_nav_frame = -1;
+			}
+		} else if (curr == end) {
+			nextx = chars[i].endx;
+			nexty = chars[i].endy;
+			nextpos_chosen = true;
+			chars[i].next_nav.i = ~0U;
+			chars[i].end_nav.i = ~0U;
+		} else {
 			chunk_remove_char(i);
-			chars[i].x += vx;
-			chars[i].y += vy;
-			if (chars[i].x >= DIM) {
-				chars[i].x = DIM-1;
+			chars[i].x = nav_nodes[curr].x;
+			chars[i].y = nav_nodes[curr].y;
+			chunk_add_char(i);
+			nav next = curr < end ?
+				nav_paths[(end*end-end)/2+curr].next :
+				nav_paths[(curr*curr-curr)/2+end].prev;
+			chars[i].next_nav = next;
+			nextx = nav_nodes[next.i].x;
+			nexty = nav_nodes[next.i].y;
+			nextpos_chosen = true;
+		}
+		if (nextpos_chosen) {
+			num dx = nextx - chars[i].x;
+			num dy = nexty - chars[i].y;
+			num qu = (dx*dx+dy*dy)/UNIT;
+			num scale = invsqrt_nr(qu);
+			num dist = qu*scale/UNIT;
+			const num SPEED = UNIT/4;
+			chars[i].velx = dx*scale/UNIT*SPEED/UNIT;
+			chars[i].vely = dy*scale/UNIT*SPEED/UNIT;
+			chars[i].next_nav_frame = frame + dist / SPEED;
+		}
+	}
+
+	// movement
+	range (i, char_count) {
+		num x = chars[i].x;
+		num y = chars[i].y;
+		num newx = x + chars[i].velx;
+		num newy = y + chars[i].vely;
+		bool same_chunk = get_chunk(x) == get_chunk(newx)
+			&& get_chunk(y) == get_chunk(newy);
+		if (!same_chunk) {
+			chunk_remove_char(i);
+			if (newx >= DIM) {
+				newx = DIM-1;
 			} else if (chars[i].x <= -DIM) {
-				chars[i].x = -DIM+1;
+				newx = -DIM+1;
 			}
-			if (chars[i].y >= DIM) {
-				chars[i].y = DIM-1;
+			if (newy >= DIM) {
+				newy = DIM-1;
 			} else if (chars[i].y <= -DIM) {
-				chars[i].y = -DIM+1;
+				newy = -DIM+1;
 			}
+		}
+		chars[i].x = newx;
+		chars[i].y = newy;
+		if (!same_chunk) {
 			chunk_add_char(i);
 		}
 	}
-	*/
 }
 
