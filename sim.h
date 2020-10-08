@@ -38,12 +38,12 @@ struct Char {
 
 	num x, y;
 	num velx, vely;
-	nav next_nav;
+	size_t path_count;
 	long next_nav_frame;
-	nav end_nav;
 	num endx, endy;
 } chars[CHAR_CAP];
 
+nav char_paths[CHAR_CAP][NAV_NODE_CAP];
 
 #define FIXTURE_CAP (IDIM * IDIM / 16)
 #define ITEM_INITIAL (IDIM * IDIM / 64)
@@ -259,8 +259,7 @@ void init() {
 
 		chars[i].velx = 0;
 		chars[i].vely = 0;
-		chars[i].next_nav.i = ~0U;
-		chars[i].end_nav.i = ~0U;
+		chars[i].path_count = 0;
 		chars[i].next_nav_frame = -1;
 		chars[i].endx = chars[i].x;
 		chars[i].endy = chars[i].y;
@@ -517,33 +516,24 @@ void simulate() {
 		bool nextpos_chosen = false;
 		num nextx;
 		num nexty;
-		size_t curr = chars[i].next_nav.i;
-		size_t end = chars[i].end_nav.i;
-		if (curr == ~0U || end == ~0U) {
-			if (curr != ~0U) {
-				printf("ERROR: end nav node was undefined but curr was not\n");
-				exit(1);
-			}
-			if (end != ~0U) {
-				printf("ERROR: curr nav node was undefined but end was not\n");
-				exit(1);
-			}
+		if (chars[i].path_count == 0) {
 			if (chars[i].velx == 0 && chars[i].vely == 0) {
 				if (chars[i].x == chars[i].endx && chars[i].y == chars[i].endy) {
 					chars[i].next_nav_frame = -1;
-					continue;
-				}
-				if (interval_obstructed(chars[i].x, chars[i].y, chars[i].endx, chars[i].endy)) {
+				} else if (interval_obstructed(
+					chars[i].x, chars[i].y,
+					chars[i].endx, chars[i].endy
+				)) {
 					pick_route(
 						chars[i].x, chars[i].y, chars[i].endx, chars[i].endy,
-						&chars[i].next_nav, &chars[i].end_nav
+						&chars[i].path_count, char_paths[i]
 					);
-					size_t next = chars[i].next_nav.i;
-					if (next == ~0U) {
+					if (chars[i].path_count == 0) {
 						chars[i].next_nav_frame = -1;
 					} else {
-						nextx = nav_nodes[next].x;
-						nexty = nav_nodes[next].y;
+						nav next = char_paths[i][chars[i].path_count - 1];
+						nextx = nav_nodes[next.i].x;
+						nexty = nav_nodes[next.i].y;
 						nextpos_chosen = true;
 					}
 				} else {
@@ -558,23 +548,21 @@ void simulate() {
 				chars[i].vely = 0;
 				chars[i].next_nav_frame = -1;
 			}
-		} else if (curr == end) {
-			nextx = chars[i].endx;
-			nexty = chars[i].endy;
-			nextpos_chosen = true;
-			chars[i].next_nav.i = ~0U;
-			chars[i].end_nav.i = ~0U;
 		} else {
+			nav curr = char_paths[i][chars[i].path_count - 1];
+			chars[i].path_count -= 1;
 			chunk_remove_char(i);
-			chars[i].x = nav_nodes[curr].x;
-			chars[i].y = nav_nodes[curr].y;
+			chars[i].x = nav_nodes[curr.i].x;
+			chars[i].y = nav_nodes[curr.i].y;
 			chunk_add_char(i);
-			nav next = curr < end ?
-				nav_paths[(end*end-end)/2+curr].next :
-				nav_paths[(curr*curr-curr)/2+end].prev;
-			chars[i].next_nav = next;
-			nextx = nav_nodes[next.i].x;
-			nexty = nav_nodes[next.i].y;
+			if (chars[i].path_count == 0) {
+				nextx = chars[i].endx;
+				nexty = chars[i].endy;
+			} else {
+				nav next = char_paths[i][chars[i].path_count - 1];
+				nextx = nav_nodes[next.i].x;
+				nexty = nav_nodes[next.i].y;
+			}
 			nextpos_chosen = true;
 		}
 		if (nextpos_chosen) {

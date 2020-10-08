@@ -17,14 +17,11 @@ struct NavNode {
 } nav_nodes[NAV_NODE_CAP];
 size_t nav_node_count = 0;
 
-#define NAV_PATH_CAP (NAV_NODE_CAP * (NAV_NODE_CAP - 1) / 2)
-struct NavPath {
-	nav prev; // fastest node to get from i to j (i < j)
-	nav next; // fastest node to get from j to i (i < j)
-	num distance; // distance of either of these paths - assumed symmetry
-} nav_paths[NAV_PATH_CAP];
-// nav_path_count == (nav_node_count * nav_node_count - nav_node_count) / 2
-// when i < j: nav_paths[i, j] = nav_paths[(j*j-j)/2 + i]
+size_t nav_adj_counts[NAV_NODE_CAP];
+struct NavAdj {
+	nav it;
+	num dist;
+} nav_adj[NAV_NODE_CAP][NAV_NODE_CAP];
 
 bool interval_obstructed(
 	num x0, num y0, num x1, num y1
@@ -111,14 +108,10 @@ void initialize_nav_edges(num world_l, num world_r, num world_b, num world_t) {
 			if (world_l < x && x < world_r && world_b < y && y < world_t) {
 				nav_nodes[nav_node_count].x = x;
 				nav_nodes[nav_node_count].y = y;
+				nav_adj_counts[nav_node_count] = 0;
 				nav_node_count += 1;
 			}
 		}
-	}
-	size_t path_count = nav_node_count * (nav_node_count - 1) / 2;
-	range(ind, path_count) {
-		nav_paths[ind].next.i = ~0U;
-		nav_paths[ind].distance = NUM_GREATEST;
 	}
 
 	range(j, nav_node_count) {
@@ -126,38 +119,58 @@ void initialize_nav_edges(num world_l, num world_r, num world_b, num world_t) {
 			if (!interval_obstructed(
 				nav_nodes[i].x, nav_nodes[i].y, nav_nodes[j].x, nav_nodes[j].y
 			)) {
-				size_t ind = (j*j-j)/2 + i;
-				nav_paths[ind].next.i = j;
-				nav_paths[ind].prev.i = i;
-				num dx = nav_nodes[j].x - nav_nodes[i].x;
-				num dy = nav_nodes[j].y - nav_nodes[i].y;
-				nav_paths[ind].distance = num_hypot(dx, dy);
+				struct NavAdj *adj_ij = &nav_adj[i][nav_adj_counts[i]];
+				nav_adj_counts[i] += 1;
+				struct NavAdj *adj_ji = &nav_adj[j][nav_adj_counts[j]];
+				nav_adj_counts[j] += 1;
+				adj_ij->it.i = j;
+				adj_ji->it.i = i;
+				num distance = num_hypot(
+					nav_nodes[j].x - nav_nodes[i].x,
+					nav_nodes[j].y - nav_nodes[i].y
+				);
+				adj_ij->dist = distance;
+				adj_ji->dist = distance;
 			}
 		}
 	}
+}
 
-	// all-pairs shortest paths, using Floyd-Warshall
-	range(k, nav_node_count) {
-		range(j, nav_node_count) {
-			range(i, nav_node_count) {
-				if (i == j || j == k || k == i) {
-					continue;
-				}
-				size_t indij = i < j ? (j*j-j)/2 + i : (i*i-i)/2 + j;
-				size_t indik = i < k ? (k*k-k)/2 + i : (i*i-i)/2 + k;
-				size_t indjk = j < k ? (k*k-k)/2 + j : (j*j-j)/2 + k;
-				num dij = nav_paths[indij].distance;
-				num dik = nav_paths[indik].distance;
-				num djk = nav_paths[indjk].distance;
-				if (dik != NUM_GREATEST && djk != NUM_GREATEST && dij > dik + djk) {
-					nav nextik = i < k ? nav_paths[indik].next : nav_paths[indik].prev;
-					nav nextjk = j < k ? nav_paths[indjk].next : nav_paths[indjk].prev;
-					nav_paths[indij].next = i < j ? nextik : nextjk;
-					nav_paths[indij].prev = i < j ? nextjk : nextik;
-					nav_paths[indij].distance = dik + djk;
-				}
-			}
+struct PathQueueElem {
+	num dist_so_far;
+	num dist_heuristic;
+	nav curr;
+	nav pred;
+} path_queue[NAV_NODE_CAP];
+size_t path_queue_count;
+
+void path_queue_push(num dist, num heuristic, nav curr, nav pred) {
+	struct PathQueueElem new = { dist, heuristic, curr, pred};
+	size_t i;
+	// @Performance binary search or priority queue
+	for (i = 0; i < path_queue_count; i++) {
+		if (new.dist_heuristic < path_queue[i].dist_heuristic) {
+			break;
 		}
+		if (curr.i == path_queue[i].curr.i) {
+			return;
+		}
+	}
+	for (; i < path_queue_count + 1; i++) {
+		struct PathQueueElem tmp = path_queue[i];
+		path_queue[i] = new;
+		if (i < path_queue_count && tmp.curr.i == curr.i) {
+			return;
+		}
+		new = tmp;
+	}
+	path_queue_count += 1;
+}
+
+void path_queue_pop() {
+	path_queue_count -= 1;
+	range (i, path_queue_count) {
+		path_queue[i] = path_queue[i + 1];
 	}
 }
 
@@ -165,72 +178,56 @@ void initialize_nav_edges(num world_l, num world_r, num world_b, num world_t) {
 void pick_route(
 	num startx, num starty,
 	num endx, num endy,
-	nav *startnode, nav *endnode
+	size_t *path_count, nav *path_out
 ) {
-	bool start_clear[nav_node_count];
-	bool end_clear[nav_node_count];
-	size_t start_clear_count = 0;
-	size_t end_clear_count = 0;
+	static bool covered[NAV_NODE_CAP];
+	static num end_dist[NAV_NODE_CAP];
+	static bool end_clear[NAV_NODE_CAP];
+	static nav pred[NAV_NODE_CAP];
+	path_queue_count = 0;
 	range (i, nav_node_count) {
-		if (interval_obstructed(startx, starty, nav_nodes[i].x, nav_nodes[i].y)) {
-			start_clear[i] = false;
-		} else {
-			start_clear[i] = true;
-			start_clear_count += 1;
-		}
-		if (interval_obstructed(nav_nodes[i].x, nav_nodes[i].y, endx, endy)) {
-			end_clear[i] = false;
-		} else {
-			end_clear[i] = true;
-			end_clear_count += 1;
-		}
-	}
-	size_t start_i[start_clear_count];
-	num start_dist[start_clear_count];
-	size_t start_dist_init_count = 0;
-	size_t end_i[end_clear_count];
-	num end_dist[end_clear_count];
-	size_t end_dist_init_count = 0;
-	range (i, nav_node_count) {
-		if (start_clear[i]) {
-			start_i[start_dist_init_count] = i;
-			start_dist[start_dist_init_count] =
+		// @Robustness is ~0U even right?? surely ~0UL or UINT64_MAX... ugh
+		pred[i].i = ~0U;
+		covered[i] = false;
+		num heuristic =
+			num_hypot(endx - nav_nodes[i].x, endy - nav_nodes[i].y);
+		if (!interval_obstructed(startx, starty, nav_nodes[i].x, nav_nodes[i].y)) {
+			num dist =
 				num_hypot(nav_nodes[i].x - startx, nav_nodes[i].y - starty);
-			start_dist_init_count += 1;
+			path_queue_push(dist, dist + heuristic, (nav){i}, (nav){~0U});
 		}
-		if (end_clear[i]) {
-			end_i[end_dist_init_count] = i;
-			end_dist[end_dist_init_count] =
-				num_hypot(endx - nav_nodes[i].x, endy - nav_nodes[i].y);
-			end_dist_init_count += 1;
+		end_dist[i] = heuristic;
+		end_clear[i] =
+			!interval_obstructed(nav_nodes[i].x, nav_nodes[i].y, endx, endy);
+	}
+	*path_count = 0;
+	nav end = (nav){~0U};
+	while (path_queue_count > 0) {
+		num dist_so_far = path_queue[0].dist_so_far;
+		nav curr = path_queue[0].curr;
+		covered[curr.i] = true;
+		pred[curr.i] = path_queue[0].pred;
+		path_queue_pop();
+		if (end_clear[curr.i]) {
+			end = curr;
+			break;
+		}
+		range (j, nav_adj_counts[curr.i]) {
+			nav next = nav_adj[curr.i][j].it;
+			// @Correctness just because curr is optimal does not mean next
+			// will be... need to change this so that covered[i] and pred[i]
+			// are set only when expanding i, not just queueing i
+			if (!covered[next.i]) {
+				num step_dist = nav_adj[curr.i][j].dist;
+				num dist = dist_so_far + step_dist;
+				path_queue_push(dist, dist + end_dist[next.i], next, curr);
+			}
 		}
 	}
-	startnode->i = ~0U;
-	endnode->i = ~0U;
-	num min_dist = NUM_GREATEST;
-	range (i0, start_clear_count) {
-		size_t i = start_i[i0];
-		range (j0, end_clear_count) {
-			size_t j = end_i[j0];
-			num path_dist = 0;
-			if (i != j) {
-				size_t ind = i < j ? (j*j-j)/2+i : (i*i-i)/2+j;
-				path_dist = nav_paths[ind].distance;
-			}
-			num dist = NUM_GREATEST;
-			if (
-				start_dist[i0] < NUM_GREATEST &&
-				path_dist < NUM_GREATEST &&
-				end_dist[j0] < NUM_GREATEST
-			) {
-				dist = start_dist[i0] + path_dist + end_dist[j0];
-			}
-			if (dist < min_dist) {
-				startnode->i = i;
-				endnode->i = j;
-				min_dist = dist;
-			}
-		}
+	while (end.i != ~0U) {
+		path_out[*path_count] = end;
+		*path_count += 1;
+		end = pred[end.i];
 	}
 }
 

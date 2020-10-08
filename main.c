@@ -161,9 +161,10 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
 		rect(vertex_data, &total, xl, yb, xr, yt, 1.0F, 1.0F, 1.0F);
 	}
 	/*
-	range (j, nav_node_count) {
-		range (i, j) {
-			if (nav_paths[(j*j-j)/2+i].next.i == j) {
+	range (i, nav_node_count) {
+		range (j0, nav_adj_counts[i]) {
+			size_t j = nav_adj[i][j0].it.i;
+			if (i < j) {
 				line_by_num(
 					vertex_data, &total,
 					nav_nodes[i].x, nav_nodes[i].y,
