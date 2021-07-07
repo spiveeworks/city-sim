@@ -8,40 +8,23 @@ typedef unsigned char u8;
 FT_Library  library;
 FT_Face     face;
 
-#define PIXEL_BUFFER_CAP 1000000
-u8 pixel_buffer[PIXEL_BUFFER_CAP];
-long pixel_buffer_count;
+#define FONT_TEXTURE_CAP 10000000
+u8 font_texture[FONT_TEXTURE_CAP];
+int font_texture_width;
+int font_texture_height;
+int font_texture_glyph_width;
+int font_texture_glyph_height;
 
 #define GLYPH_COUNT 256
 struct Glyph {
-    u8 *pixels;
     int width;
     int height;
+    int bearingx;
+    int bearingy;
+    int advance;
 };
 struct Glyph glyphs[GLYPH_COUNT];
 typedef struct Glyph *Glyph;
-
-void load_glyph(Glyph glyph, FT_Bitmap *glyph_bitmap) {
-    int width = glyph_bitmap->width;
-    int height = glyph_bitmap->rows;
-    glyph->width = width;
-    glyph->height = height;
-
-    glyph->pixels = &pixel_buffer[pixel_buffer_count];
-    pixel_buffer_count += width * height;
-    if (pixel_buffer_count > PIXEL_BUFFER_CAP) {
-        fprintf(stderr, "ERROR: reached end of pixel buffer\n");
-        exit(1);
-    }
-
-    u8 *in_row = glyph_bitmap->buffer;
-    u8 *out_row = glyph->pixels;
-    for (int i = 0; i < height; i++) {
-        memcpy(out_row, in_row, width);
-        in_row += glyph_bitmap->pitch;
-        out_row += width;
-    }
-}
 
 void init_text() {
     FT_Error error = FT_Init_FreeType(&library);
@@ -76,6 +59,39 @@ void init_text() {
         exit(1);
     }
 
+    int font_texture_glyph_width = 0;
+    int font_texture_glyph_height = 0;
+    for (int i = 0; i < GLYPH_COUNT; i++) {
+        error = FT_Load_Char(face, i, 0);
+        if (error)
+            continue;  /* ignore errors */
+
+        FT_Glyph_Metrics *metrics = &face->glyph->metrics;
+        glyphs[i].width = metrics->width >> 6;
+        glyphs[i].height = metrics->height >> 6;
+        glyphs[i].bearingx = metrics->horiBearingX;
+        glyphs[i].bearingy = metrics->horiBearingY;
+        glyphs[i].advance = metrics->horiAdvance;
+
+        if (glyphs[i].width > font_texture_glyph_width) {
+            font_texture_glyph_width = glyphs[i].width;
+        }
+        if (glyphs[i].height > font_texture_glyph_height) {
+            font_texture_glyph_height = glyphs[i].height;
+        }
+    }
+
+    font_texture_width = font_texture_glyph_width;
+    font_texture_height = 256 * font_texture_glyph_height;
+
+    /* could really malloc */
+    if (font_texture_width * font_texture_height > FONT_TEXTURE_CAP) {
+        fprintf(stderr, "ERROR: font texture not large enough\n");
+        exit(1);
+    }
+
+    int glyph_size = font_texture_glyph_width * font_texture_glyph_height;
+
     for (int i = 0; i < GLYPH_COUNT; i++) {
         /* load glyph image into the slot (erase previous one) */
         error = FT_Load_Char(face, i, FT_LOAD_RENDER);
@@ -83,24 +99,40 @@ void init_text() {
             continue;  /* ignore errors */
 
         /* now, draw to our target surface */
-        load_glyph(&glyphs[i], &face->glyph->bitmap);
+        int width = glyphs[i].width;
+        int height = glyphs[i].height;
+        if (width != face->glyph->bitmap.width) {
+            fprintf(stderr, "glyph width incorrect\n");
+            exit(1);
+        }
+        if (height != face->glyph->bitmap.rows) {
+            fprintf(stderr, "glyph height incorrect\n");
+            exit(1);
+        }
+
+        u8 *start = &font_texture[glyph_size * i];
+        memset(start, 0, font_texture_glyph_width * font_texture_glyph_height);
+        u8 *in_row = face->glyph->bitmap.buffer;
+        for (int j = 0; j < height; j++) {
+            memcpy(start, in_row, width);
+            in_row += width;
+            start += font_texture_glyph_width;
+        }
     }
 }
 
 void test_text() {
-    Glyph glyph = &glyphs['&'];
-
     FILE *out = fopen("text.pgm", "w");
 
-    fprintf(out, "P2 %d %d %d\n", glyph->width, glyph->height, 255);
+    fprintf(out, "P2 %d %d %d\n", font_texture_width, font_texture_height, 255);
 
-    u8 *row = glyph->pixels;
-    for (int j = 0; j < glyph->height; j++) {
-        for (int i = 0; i < glyph->width; i++) {
+    u8 *row = font_texture;
+    for (int j = 0; j < font_texture_height; j++) {
+        for (int i = 0; i < font_texture_width; i++) {
             fprintf(out, "%d ", 255 - row[i]);
         }
         fprintf(out, "\n");
-        row += glyph->width;
+        row += font_texture_width;
     }
 
     fclose(out);
