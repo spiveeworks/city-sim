@@ -1,5 +1,6 @@
 #define FRAMERATE 60
 
+#include "text.h"
 #include "graphics.h"
 
 #include "data.h"
@@ -207,6 +208,11 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 }
 
 int main() {
+	init_text();
+	test_text();
+	printf("Testing finished, exiting without running application\n");
+	exit(0);
+
 	srand(time(&start_time));
 
 	parse_data();
