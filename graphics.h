@@ -41,6 +41,9 @@ struct Graphics {
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
 
+    VkImage textureImage;
+    VkDeviceMemory textureMemory;
+
     VkImageView swapchainImageViews[STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT];
     VkFramebuffer swapchainFramebuffers[STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT];
     VkCommandPool commandPool;
@@ -93,6 +96,34 @@ VkShaderModule createShaderModule(VkDevice dev, char* filename) {
     return result;
 }
 
+void allocateMemory(
+    struct GraphicsInstance *gi,
+    VkMemoryRequirements memRequirements,
+    VkMemoryPropertyFlags properties,
+    VkDeviceMemory *bufferMemory
+) {
+    VkMemoryAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+
+    VkPhysicalDeviceMemoryProperties memProperties;
+    vkGetPhysicalDeviceMemoryProperties(gi->dev_p, &memProperties);
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+        if (
+            (memRequirements.memoryTypeBits & (1 << i)) &&
+            (memProperties.memoryTypes[i].propertyFlags & properties) == properties
+        ) {
+            allocInfo.memoryTypeIndex = i;
+            break;
+        }
+    }
+    if (vkAllocateMemory(gi->dev, &allocInfo, NULL, bufferMemory) != VK_SUCCESS)
+    {
+        printf("Failed to allocate memory!\n");
+        exit(1);
+    }
+}
+
 void createBuffer(
     struct GraphicsInstance *gi,
     VkDeviceSize size,
@@ -114,27 +145,58 @@ void createBuffer(
     VkMemoryRequirements memRequirements;
     vkGetBufferMemoryRequirements(gi->dev, *buffer, &memRequirements);
 
-    VkMemoryAllocateInfo allocInfo = {};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size;
+    allocateMemory(gi, memRequirements, properties, bufferMemory);
+    vkBindBufferMemory(gi->dev, *buffer, *bufferMemory, 0);
+}
 
-    VkPhysicalDeviceMemoryProperties memProperties;
-    vkGetPhysicalDeviceMemoryProperties(gi->dev_p, &memProperties);
-    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-        if (
-            (memRequirements.memoryTypeBits & (1 << i)) &&
-            (memProperties.memoryTypes[i].propertyFlags & properties) == properties
-        ) {
-            allocInfo.memoryTypeIndex = i;
-            break;
-        }
-    }
-    if (vkAllocateMemory(gi->dev, &allocInfo, NULL, bufferMemory) != VK_SUCCESS)
-    {
-        printf("Failed to allocate vertex buffer memory!\n");
+void transitionImageLayoutCmd(
+    struct GraphicsInstance *gi,
+    VkCommandBuffer commandBuffer,
+    VkImage image,
+    VkImageLayout oldLayout,
+    VkImageLayout newLayout
+) {
+    VkImageMemoryBarrier barrier = {};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+
+    VkPipelineStageFlags sourceStage;
+    VkPipelineStageFlags destinationStage;
+
+    if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else {
+        printf("unsupported layout transition\n");
         exit(1);
     }
-    vkBindBufferMemory(gi->dev, *buffer, *bufferMemory, 0);
+
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        sourceStage, destinationStage,
+        0,
+        0, 0,
+        0, 0,
+        1, &barrier
+    );
 }
 
 struct GraphicsInstance createGraphicsInstance() {
@@ -374,6 +436,7 @@ struct GraphicsInstance createGraphicsInstance() {
         vkGetDeviceQueue(g.dev, g.qfi[QF_PRESENTATION], 0, &g.pq);
     }
 
+    // vertex buffers
     {
         createBuffer(
             gi,
@@ -397,7 +460,7 @@ struct GraphicsInstance createGraphicsInstance() {
     return g;
 }
 
-struct Graphics createGraphics(struct GraphicsInstance *gi) {
+struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int texHeight, int texDepth, uint8_t *tex) {
     struct Graphics g;
     g.bufferAllocated = false;
 
@@ -723,6 +786,128 @@ struct Graphics createGraphics(struct GraphicsInstance *gi) {
         }
     }
 
+    // create font texture
+    {
+        VkDeviceSize imageSize = texWidth * texHeight * texDepth;
+
+        VkBuffer imageStagingBuffer;
+        VkDeviceMemory imageStagingMemory;
+        createBuffer(
+            gi,
+            imageSize,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            &imageStagingBuffer,
+            &imageStagingMemory
+        );
+
+        void* data;
+        vkMapMemory(gi->dev, imageStagingMemory, 0, imageSize, 0, &data);
+        memcpy(data, tex, (unsigned)imageSize);
+        vkUnmapMemory(gi->dev, imageStagingMemory);
+
+        VkImageCreateInfo imageInfo = {};
+        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imageInfo.imageType = VK_IMAGE_TYPE_3D;
+        imageInfo.extent.width = texWidth;
+        imageInfo.extent.height = texHeight;
+        imageInfo.extent.depth = texDepth;
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.format = VK_FORMAT_R8_UNORM;
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT
+            | VK_IMAGE_USAGE_SAMPLED_BIT;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        if (vkCreateImage(gi->dev, &imageInfo, 0, &g.textureImage)
+            != VK_SUCCESS)
+        {
+            printf("failed to create image\n");
+            exit(1);
+        }
+
+        VkMemoryRequirements memRequirements;
+        vkGetImageMemoryRequirements(gi->dev, g.textureImage, &memRequirements);
+
+        allocateMemory(
+            gi,
+            memRequirements,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            &g.textureMemory
+        );
+
+        vkBindImageMemory(gi->dev, g.textureImage, g.textureMemory, 0);
+
+        VkCommandBufferAllocateInfo allocInfo = {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandPool = g.commandPool;
+        allocInfo.commandBufferCount = 1;
+
+        VkCommandBuffer commandBuffer;
+        vkAllocateCommandBuffers(gi->dev, &allocInfo, &commandBuffer);
+
+        VkCommandBufferBeginInfo beginInfo = {};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+        vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+        transitionImageLayoutCmd(
+            gi,
+            commandBuffer,
+            g.textureImage,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+        );
+
+        VkBufferImageCopy region = {};
+        region.bufferOffset = 0;
+        region.bufferRowLength = 0;
+        region.bufferImageHeight = 0;
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.mipLevel = 0;
+        region.imageSubresource.baseArrayLayer = 0;
+        region.imageSubresource.layerCount = 1;
+        region.imageOffset = (VkOffset3D){0, 0, 0};
+        region.imageExtent = (VkExtent3D){texWidth, texHeight, texDepth};
+
+        vkCmdCopyBufferToImage(
+            commandBuffer,
+            imageStagingBuffer,
+            g.textureImage,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            1,
+            &region
+        );
+
+        transitionImageLayoutCmd(
+            gi,
+            commandBuffer,
+            g.textureImage,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        );
+
+        vkEndCommandBuffer(commandBuffer);
+
+        VkSubmitInfo submitInfo = {};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &commandBuffer;
+
+        vkQueueSubmit(gi->gq, 1, &submitInfo, VK_NULL_HANDLE);
+        vkQueueWaitIdle(gi->gq);
+
+        vkFreeCommandBuffers(gi->dev, g.commandPool, 1, &commandBuffer);
+
+        vkDestroyBuffer(gi->dev, imageStagingBuffer, 0);
+        vkFreeMemory(gi->dev, imageStagingMemory, 0);
+    }
+
     // create views, framebuffers, vertexbuffer, commandbuffers
     range (i, g.swapchainImageCount) {
         // image view
@@ -931,6 +1116,9 @@ void destroyGraphics(struct GraphicsInstance *gi, struct Graphics *g) {
 
     // @Performance wasteful?
     vkDestroyCommandPool(gi->dev, g->commandPool, NULL);
+
+    vkDestroyImage(gi->dev, g->textureImage, NULL);
+    vkFreeMemory(gi->dev, g->textureMemory, NULL);
 
     range (i, g->swapchainImageCount) {
         vkDestroyFramebuffer(gi->dev, g->swapchainFramebuffers[i], NULL);

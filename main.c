@@ -208,18 +208,21 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 }
 
 int main() {
-    init_text();
-    test_text();
-    printf("Testing finished, exiting without running application\n");
-    exit(0);
-
     srand(time(&start_time));
 
     parse_data();
     printf("Total of %lu item types\n", item_type_count);
 
+    init_text();
+
     struct GraphicsInstance gi = createGraphicsInstance();
-    struct Graphics g = createGraphics(&gi);
+    struct Graphics g = createGraphics(
+        &gi,
+        font_texture_width,
+        font_texture_height,
+        GLYPH_COUNT,
+        font_texture
+    );
 
     bool recreateGraphics = false;
     glfwSetWindowUserPointer(gi.window, &recreateGraphics);
@@ -248,7 +251,13 @@ int main() {
             }
 
             destroyGraphics(&gi, &g);
-            g = createGraphics(&gi);
+            g = createGraphics(
+                &gi,
+                font_texture_width,
+                font_texture_height,
+                GLYPH_COUNT,
+                font_texture
+            );
             recreateGraphics = false;
         }
     }

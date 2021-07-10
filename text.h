@@ -12,8 +12,6 @@ FT_Face     face;
 u8 font_texture[FONT_TEXTURE_CAP];
 int font_texture_width;
 int font_texture_height;
-int font_texture_glyph_width;
-int font_texture_glyph_height;
 
 #define GLYPH_COUNT 256
 struct Glyph {
@@ -59,8 +57,8 @@ void init_text() {
         exit(1);
     }
 
-    int font_texture_glyph_width = 0;
-    int font_texture_glyph_height = 0;
+    font_texture_width = 0;
+    font_texture_height = 0;
     for (int i = 0; i < GLYPH_COUNT; i++) {
         error = FT_Load_Char(face, i, 0);
         if (error)
@@ -73,24 +71,21 @@ void init_text() {
         glyphs[i].bearingy = metrics->horiBearingY;
         glyphs[i].advance = metrics->horiAdvance;
 
-        if (glyphs[i].width > font_texture_glyph_width) {
-            font_texture_glyph_width = glyphs[i].width;
+        if (glyphs[i].width > font_texture_width) {
+            font_texture_width = glyphs[i].width;
         }
-        if (glyphs[i].height > font_texture_glyph_height) {
-            font_texture_glyph_height = glyphs[i].height;
+        if (glyphs[i].height > font_texture_height) {
+            font_texture_height = glyphs[i].height;
         }
     }
 
-    font_texture_width = font_texture_glyph_width;
-    font_texture_height = 256 * font_texture_glyph_height;
-
     /* could really malloc */
-    if (font_texture_width * font_texture_height > FONT_TEXTURE_CAP) {
+    if (font_texture_width * font_texture_height * GLYPH_COUNT > FONT_TEXTURE_CAP) {
         fprintf(stderr, "ERROR: font texture not large enough\n");
         exit(1);
     }
 
-    int glyph_size = font_texture_glyph_width * font_texture_glyph_height;
+    int glyph_size = font_texture_width * font_texture_height;
 
     for (int i = 0; i < GLYPH_COUNT; i++) {
         /* load glyph image into the slot (erase previous one) */
@@ -111,29 +106,13 @@ void init_text() {
         }
 
         u8 *start = &font_texture[glyph_size * i];
-        memset(start, 0, font_texture_glyph_width * font_texture_glyph_height);
+        memset(start, 0, glyph_size);
         u8 *in_row = face->glyph->bitmap.buffer;
         for (int j = 0; j < height; j++) {
             memcpy(start, in_row, width);
             in_row += width;
-            start += font_texture_glyph_width;
+            start += font_texture_width;
         }
     }
 }
 
-void test_text() {
-    FILE *out = fopen("text.pgm", "w");
-
-    fprintf(out, "P2 %d %d %d\n", font_texture_width, font_texture_height, 255);
-
-    u8 *row = font_texture;
-    for (int j = 0; j < font_texture_height; j++) {
-        for (int i = 0; i < font_texture_width; i++) {
-            fprintf(out, "%d ", 255 - row[i]);
-        }
-        fprintf(out, "\n");
-        row += font_texture_width;
-    }
-
-    fclose(out);
-}
