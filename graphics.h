@@ -43,6 +43,8 @@ struct Graphics {
 
     VkImage textureImage;
     VkDeviceMemory textureMemory;
+    VkImageView textureImageView;
+    VkSampler textureSampler;
 
     VkImageView swapchainImageViews[STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT];
     VkFramebuffer swapchainFramebuffers[STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT];
@@ -788,6 +790,7 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
 
     // create font texture
     {
+        // staging buffer
         VkDeviceSize imageSize = texWidth * texHeight * texDepth;
 
         VkBuffer imageStagingBuffer;
@@ -806,6 +809,7 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
         memcpy(data, tex, (unsigned)imageSize);
         vkUnmapMemory(gi->dev, imageStagingMemory);
 
+        // image creation
         VkImageCreateInfo imageInfo = {};
         imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         imageInfo.imageType = VK_IMAGE_TYPE_3D;
@@ -841,6 +845,7 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
 
         vkBindImageMemory(gi->dev, g.textureImage, g.textureMemory, 0);
 
+        // image transfer
         VkCommandBufferAllocateInfo allocInfo = {};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -906,6 +911,49 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
 
         vkDestroyBuffer(gi->dev, imageStagingBuffer, 0);
         vkFreeMemory(gi->dev, imageStagingMemory, 0);
+
+        // image view
+        VkImageViewCreateInfo createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        createInfo.viewType = VK_IMAGE_VIEW_TYPE_3D;
+        createInfo.format = VK_FORMAT_R8_UNORM;
+        createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        createInfo.subresourceRange.baseMipLevel = 0;
+        createInfo.subresourceRange.levelCount = 1;
+        createInfo.subresourceRange.baseArrayLayer = 0;
+        createInfo.subresourceRange.layerCount = 1;
+        createInfo.image = g.textureImage;
+
+        if (vkCreateImageView(gi->dev, &createInfo, NULL, &g.textureImageView) != VK_SUCCESS)
+        {
+            printf("failed to create image view!\n");
+            exit(1);
+        }
+
+        // image sampler
+        VkPhysicalDeviceProperties properties = {};
+        vkGetPhysicalDeviceProperties(gi->dev_p, &properties);
+
+        VkSamplerCreateInfo samplerInfo = {};
+        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.magFilter = VK_FILTER_NEAREST;
+        samplerInfo.minFilter = VK_FILTER_NEAREST;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        samplerInfo.anisotropyEnable = VK_FALSE;
+        samplerInfo.borderColor = VK_BORDER_COLOR_INT_TRANSPARENT_BLACK;
+        samplerInfo.unnormalizedCoordinates = VK_FALSE;
+        samplerInfo.compareEnable = VK_FALSE;
+        samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+
+        if (vkCreateSampler(gi->dev, &samplerInfo, NULL, &g.textureSampler)
+            != VK_SUCCESS)
+        {
+            printf("failed to create texture sampler!\n");
+            exit(1);
+        }
     }
 
     // create views, framebuffers, vertexbuffer, commandbuffers
@@ -913,15 +961,8 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
         // image view
         VkImageViewCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-
         createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
         createInfo.format = g.swapchainImageFormat;
-
-        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-
         createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         createInfo.subresourceRange.baseMipLevel = 0;
         createInfo.subresourceRange.levelCount = 1;
@@ -933,6 +974,7 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
                 &g.swapchainImageViews[i]) != VK_SUCCESS)
         {
             printf("failed to create image view!\n");
+            exit(1);
         }
 
         // framebuffer
@@ -1117,6 +1159,8 @@ void destroyGraphics(struct GraphicsInstance *gi, struct Graphics *g) {
     // @Performance wasteful?
     vkDestroyCommandPool(gi->dev, g->commandPool, NULL);
 
+    vkDestroySampler(gi->dev, g->textureSampler, NULL);
+    vkDestroyImageView(gi->dev, g->textureImageView, NULL);
     vkDestroyImage(gi->dev, g->textureImage, NULL);
     vkFreeMemory(gi->dev, g->textureMemory, NULL);
 
