@@ -85,7 +85,7 @@ void init_text() {
         exit(1);
     }
 
-    int glyph_size = font_texture_width * font_texture_height;
+    int glyph_size = font_texture_width * font_texture_height * 4;
 
     for (int i = 0; i < GLYPH_COUNT; i++) {
         /* load glyph image into the slot (erase previous one) */
@@ -105,13 +105,18 @@ void init_text() {
             exit(1);
         }
 
-        u8 *start = &font_texture[glyph_size * i];
-        memset(start, 0, glyph_size);
+        u8 *out_row = &font_texture[glyph_size * i];
+        memset(out_row, 0, glyph_size);
         u8 *in_row = face->glyph->bitmap.buffer;
-        for (int j = 0; j < height; j++) {
-            memcpy(start, in_row, width);
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                out_row[4*x + 0] = in_row[x];
+                out_row[4*x + 1] = in_row[x];
+                out_row[4*x + 2] = in_row[x];
+                out_row[4*x + 3] = 255;
+            }
             in_row += width;
-            start += font_texture_width;
+            out_row += font_texture_width * 4;
         }
     }
 }

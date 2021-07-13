@@ -43,8 +43,6 @@ struct Graphics {
 
     VkImage textureImage;
     VkDeviceMemory textureMemory;
-    VkImageView textureImageView;
-    VkSampler textureSampler;
 
     VkImageView swapchainImageViews[STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT];
     VkFramebuffer swapchainFramebuffers[STRUCT_GRAPHICS_MAX_SWAPCHAIN_IMAGE_COUNT];
@@ -151,17 +149,66 @@ void createBuffer(
     vkBindBufferMemory(gi->dev, *buffer, *bufferMemory, 0);
 }
 
-void transitionImageLayoutCmd(
+typedef enum ImageMode {
+    IMAGE_MODE_UNINITIALISED,
+    IMAGE_MODE_WRITING,
+    IMAGE_MODE_SAMPLING,
+    IMAGE_MODE_READING,
+    IMAGE_MODE_PRESENTING
+} ImageMode;
+
+void imageModeOptions(
+    ImageMode mode,
+    VkImageLayout *pLayout,
+    VkAccessFlags *pAccess,
+    VkPipelineStageFlagBits *pStage
+) {
+    VkImageLayout layout;
+    VkAccessFlags access;
+    VkPipelineStageFlagBits stage;
+
+    switch (mode) {
+    case IMAGE_MODE_UNINITIALISED:
+        layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        access = 0;
+        stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        break;
+    case IMAGE_MODE_WRITING:
+        layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        access = VK_ACCESS_TRANSFER_WRITE_BIT;
+        stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        break;
+    case IMAGE_MODE_SAMPLING:
+        layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        access = VK_ACCESS_SHADER_READ_BIT;
+        stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        break;
+    case IMAGE_MODE_READING:
+        layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        access = VK_ACCESS_TRANSFER_READ_BIT;
+        stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        break;
+    case IMAGE_MODE_PRESENTING:
+        layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        access = 0;
+        stage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+        break;
+    }
+
+    if (pLayout) *pLayout = layout;
+    if (pAccess) *pAccess = access;
+    if (pStage)  *pStage  = stage;
+}
+
+void transitionImageModeCmd(
     struct GraphicsInstance *gi,
     VkCommandBuffer commandBuffer,
     VkImage image,
-    VkImageLayout oldLayout,
-    VkImageLayout newLayout
+    ImageMode oldMode,
+    ImageMode newMode
 ) {
     VkImageMemoryBarrier barrier = {};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = oldLayout;
-    barrier.newLayout = newLayout;
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = image;
@@ -174,22 +221,10 @@ void transitionImageLayoutCmd(
     VkPipelineStageFlags sourceStage;
     VkPipelineStageFlags destinationStage;
 
-    if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-        barrier.srcAccessMask = 0;
-        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-        destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-        sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    } else {
-        printf("unsupported layout transition\n");
-        exit(1);
-    }
+    imageModeOptions(oldMode,
+        &barrier.oldLayout, &barrier.srcAccessMask, &sourceStage);
+    imageModeOptions(newMode,
+        &barrier.newLayout, &barrier.dstAccessMask, &destinationStage);
 
     vkCmdPipelineBarrier(
         commandBuffer,
@@ -526,7 +561,8 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
             createInfo.minImageCount = capabilities.minImageCount + 1;
         }
         createInfo.imageArrayLayers = 1;
-        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+            | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
         // queuefamily stuff
         {
@@ -711,7 +747,8 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
         colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        imageModeOptions(IMAGE_MODE_WRITING,
+            &colorAttachment.finalLayout, NULL, NULL);
 
         VkAttachmentReference colorAttachmentRef = {};
         colorAttachmentRef.attachment = 0;
@@ -791,7 +828,7 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
     // create font texture
     {
         // staging buffer
-        VkDeviceSize imageSize = texWidth * texHeight * texDepth;
+        VkDeviceSize imageSize = texWidth * texHeight * texDepth * 4;
 
         VkBuffer imageStagingBuffer;
         VkDeviceMemory imageStagingMemory;
@@ -818,11 +855,11 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
         imageInfo.extent.depth = texDepth;
         imageInfo.mipLevels = 1;
         imageInfo.arrayLayers = 1;
-        imageInfo.format = VK_FORMAT_R8_UNORM;
+        imageInfo.format = VK_FORMAT_B8G8R8A8_UNORM;
         imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT
-            | VK_IMAGE_USAGE_SAMPLED_BIT;
+            | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
@@ -861,12 +898,12 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
 
         vkBeginCommandBuffer(commandBuffer, &beginInfo);
 
-        transitionImageLayoutCmd(
+        transitionImageModeCmd(
             gi,
             commandBuffer,
             g.textureImage,
-            VK_IMAGE_LAYOUT_UNDEFINED,
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+            IMAGE_MODE_UNINITIALISED,
+            IMAGE_MODE_WRITING
         );
 
         VkBufferImageCopy region = {};
@@ -889,12 +926,12 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
             &region
         );
 
-        transitionImageLayoutCmd(
+        transitionImageModeCmd(
             gi,
             commandBuffer,
             g.textureImage,
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+            IMAGE_MODE_WRITING,
+            IMAGE_MODE_READING
         );
 
         vkEndCommandBuffer(commandBuffer);
@@ -911,49 +948,6 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
 
         vkDestroyBuffer(gi->dev, imageStagingBuffer, 0);
         vkFreeMemory(gi->dev, imageStagingMemory, 0);
-
-        // image view
-        VkImageViewCreateInfo createInfo = {};
-        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        createInfo.viewType = VK_IMAGE_VIEW_TYPE_3D;
-        createInfo.format = VK_FORMAT_R8_UNORM;
-        createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        createInfo.subresourceRange.baseMipLevel = 0;
-        createInfo.subresourceRange.levelCount = 1;
-        createInfo.subresourceRange.baseArrayLayer = 0;
-        createInfo.subresourceRange.layerCount = 1;
-        createInfo.image = g.textureImage;
-
-        if (vkCreateImageView(gi->dev, &createInfo, NULL, &g.textureImageView) != VK_SUCCESS)
-        {
-            printf("failed to create image view!\n");
-            exit(1);
-        }
-
-        // image sampler
-        VkPhysicalDeviceProperties properties = {};
-        vkGetPhysicalDeviceProperties(gi->dev_p, &properties);
-
-        VkSamplerCreateInfo samplerInfo = {};
-        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        samplerInfo.magFilter = VK_FILTER_NEAREST;
-        samplerInfo.minFilter = VK_FILTER_NEAREST;
-        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-        samplerInfo.anisotropyEnable = VK_FALSE;
-        samplerInfo.borderColor = VK_BORDER_COLOR_INT_TRANSPARENT_BLACK;
-        samplerInfo.unnormalizedCoordinates = VK_FALSE;
-        samplerInfo.compareEnable = VK_FALSE;
-        samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-
-        if (vkCreateSampler(gi->dev, &samplerInfo, NULL, &g.textureSampler)
-            != VK_SUCCESS)
-        {
-            printf("failed to create texture sampler!\n");
-            exit(1);
-        }
     }
 
     // create views, framebuffers, vertexbuffer, commandbuffers
@@ -1098,6 +1092,35 @@ bool drawFrame(struct GraphicsInstance *gi, struct Graphics *g) {
         vkCmdDraw(g->commandBuffer, vertex_count, 1, 0, 0);
         vkCmdEndRenderPass(g->commandBuffer);
 
+        VkImageSubresourceLayers subresource = {};
+        subresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        subresource.mipLevel = 0;
+        subresource.baseArrayLayer = 0;
+        subresource.layerCount = 1;
+        VkImageCopy regions[1] = {};
+        regions[0].srcSubresource = subresource;
+        regions[0].dstSubresource = subresource;
+        regions[0].srcOffset = (VkOffset3D){0, 0, 'm'};
+        regions[0].dstOffset = (VkOffset3D){0, 0, 0};
+        regions[0].extent = (VkExtent3D){60, 60, 1};
+        vkCmdCopyImage(
+            g->commandBuffer,
+            g->textureImage,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            g->swapchainImages[imageIndex],
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            1,
+            regions
+        );
+
+        transitionImageModeCmd(
+            gi,
+            g->commandBuffer,
+            g->swapchainImages[imageIndex],
+            IMAGE_MODE_WRITING,
+            IMAGE_MODE_PRESENTING
+        );
+
         if (vkEndCommandBuffer(g->commandBuffer) != VK_SUCCESS) {
             printf("failed to record command buffer!\n");
             exit(1);
@@ -1159,8 +1182,6 @@ void destroyGraphics(struct GraphicsInstance *gi, struct Graphics *g) {
     // @Performance wasteful?
     vkDestroyCommandPool(gi->dev, g->commandPool, NULL);
 
-    vkDestroySampler(gi->dev, g->textureSampler, NULL);
-    vkDestroyImageView(gi->dev, g->textureImageView, NULL);
     vkDestroyImage(gi->dev, g->textureImage, NULL);
     vkFreeMemory(gi->dev, g->textureMemory, NULL);
 
