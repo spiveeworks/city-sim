@@ -62,7 +62,14 @@ struct Vertex {
 #define VERTEX_BUFFER_LEN 65536
 #define VERTEX_BUFFER_BYTES (VERTEX_BUFFER_LEN * sizeof(struct Vertex))
 
-size_t build_vertex_data(struct Vertex* vertex_data);
+#define SPRITE_REGION_CAP 65536
+
+void build_frame_data(
+    size_t *vertex_count,
+    struct Vertex* vertex_data,
+    size_t *sprite_count,
+    VkImageCopy *sprite_regions
+);
 
 VkShaderModule createShaderModule(VkDevice dev, char* filename) {
     size_t size = 0;
@@ -1018,9 +1025,21 @@ bool drawFrame(struct GraphicsInstance *gi, struct Graphics *g) {
     }
 
     // copy vertex data
-    size_t vertex_count = build_vertex_data((struct Vertex*)gi->stagingData);
+    size_t vertex_count;
+    size_t sprite_count;
+    static VkImageCopy sprite_regions[SPRITE_REGION_CAP];
+    build_frame_data(
+        &vertex_count,
+        (struct Vertex*)gi->stagingData,
+        &sprite_count,
+        sprite_regions
+    );
     if (vertex_count > VERTEX_BUFFER_LEN) {
         printf("Vertex count exceeds buffer length\n");
+        exit(1);
+    }
+    if (sprite_count > SPRITE_REGION_CAP) {
+        printf("Sprite count exceeds buffer length\n");
         exit(1);
     }
 
@@ -1092,25 +1111,14 @@ bool drawFrame(struct GraphicsInstance *gi, struct Graphics *g) {
         vkCmdDraw(g->commandBuffer, vertex_count, 1, 0, 0);
         vkCmdEndRenderPass(g->commandBuffer);
 
-        VkImageSubresourceLayers subresource = {};
-        subresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        subresource.mipLevel = 0;
-        subresource.baseArrayLayer = 0;
-        subresource.layerCount = 1;
-        VkImageCopy regions[1] = {};
-        regions[0].srcSubresource = subresource;
-        regions[0].dstSubresource = subresource;
-        regions[0].srcOffset = (VkOffset3D){0, 0, 'm'};
-        regions[0].dstOffset = (VkOffset3D){0, 0, 0};
-        regions[0].extent = (VkExtent3D){60, 60, 1};
         vkCmdCopyImage(
             g->commandBuffer,
             g->textureImage,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             g->swapchainImages[imageIndex],
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            1,
-            regions
+            sprite_count,
+            sprite_regions
         );
 
         transitionImageModeCmd(

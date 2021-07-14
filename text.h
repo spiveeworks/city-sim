@@ -67,9 +67,9 @@ void init_text() {
         FT_Glyph_Metrics *metrics = &face->glyph->metrics;
         glyphs[i].width = metrics->width >> 6;
         glyphs[i].height = metrics->height >> 6;
-        glyphs[i].bearingx = metrics->horiBearingX;
-        glyphs[i].bearingy = metrics->horiBearingY;
-        glyphs[i].advance = metrics->horiAdvance;
+        glyphs[i].bearingx = metrics->horiBearingX >> 6;
+        glyphs[i].bearingy = metrics->horiBearingY >> 6;
+        glyphs[i].advance = metrics->horiAdvance >> 6;
 
         if (glyphs[i].width > font_texture_width) {
             font_texture_width = glyphs[i].width;

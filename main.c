@@ -108,7 +108,38 @@ void line_by_num(
     vertex_data[(*total)++] = vs[0][1];
 }
 
-size_t build_vertex_data(struct Vertex* vertex_data) {
+void text(
+    VkImageCopy *sprite_regions, size_t *total,
+    size_t str_len, char *data,
+    int x0, int y0
+) {
+    VkImageSubresourceLayers subresource = {};
+    subresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    subresource.mipLevel = 0;
+    subresource.baseArrayLayer = 0;
+    subresource.layerCount = 1;
+
+    int x = x0;
+    range (i, str_len) {
+        char c = data[i];
+        sprite_regions[*total].srcSubresource = subresource;
+        sprite_regions[*total].dstSubresource = subresource;
+        sprite_regions[*total].srcOffset = (VkOffset3D){0, 0, c};
+        sprite_regions[*total].dstOffset =
+            (VkOffset3D){x + glyphs[c].bearingx, y0 - glyphs[c].bearingy, 0};
+        sprite_regions[*total].extent =
+            (VkExtent3D){glyphs[c].width, glyphs[c].height, 1};
+        (*total)++;
+        x += glyphs[c].advance;
+    }
+}
+
+void build_frame_data(
+    size_t *vertex_count,
+    struct Vertex* vertex_data,
+    size_t *sprite_count,
+    VkImageCopy *sprite_regions
+) {
     size_t total = 0;
     range (i, fixture_count) {
         Fixture fx = live_fixtures[i];
@@ -177,7 +208,12 @@ size_t build_vertex_data(struct Vertex* vertex_data) {
         }
     }
     */
-    return total;
+
+    char *str = "Hello world!";
+    *sprite_count = 0;
+    text(sprite_regions, sprite_count, strlen(str), str, 0, 60);
+
+    *vertex_count = total;
 }
 
 void recordResize(GLFWwindow *window, int width, int height) {
