@@ -68,7 +68,8 @@ void build_frame_data(
     size_t *vertex_count,
     struct Vertex* vertex_data,
     size_t *sprite_count,
-    VkImageCopy *sprite_regions
+    VkImageCopy *sprite_regions,
+    int screen_width, int screen_height
 );
 
 VkShaderModule createShaderModule(VkDevice dev, char* filename) {
@@ -1032,7 +1033,9 @@ bool drawFrame(struct GraphicsInstance *gi, struct Graphics *g) {
         &vertex_count,
         (struct Vertex*)gi->stagingData,
         &sprite_count,
-        sprite_regions
+        sprite_regions,
+        g->swapchainExtent.width,
+        g->swapchainExtent.height
     );
     if (vertex_count > VERTEX_BUFFER_LEN) {
         printf("Vertex count exceeds buffer length\n");

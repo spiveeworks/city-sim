@@ -108,7 +108,7 @@ void line_by_num(
     vertex_data[(*total)++] = vs[0][1];
 }
 
-void text(
+void text_line(
     VkImageCopy *sprite_regions, size_t *total,
     size_t str_len, char *data,
     int x0, int y0
@@ -134,11 +134,105 @@ void text(
     }
 }
 
+#define TEXT_BOX_CAP 128
+
+typedef struct str {
+    char *data;
+    size_t len;
+} str;
+
+struct TextBoxInfo {
+    int width;
+    int height;
+    int rows;
+    str lines[TEXT_BOX_CAP];
+};
+
+void text_box_info(
+    str text,
+    int width,
+    struct TextBoxInfo *info
+) {
+    int line = 0;
+    info->lines[0].data = text.data;
+    info->lines[0].len = 0;
+
+    int cursor = 0;
+    int max_cursor = 0;
+    range (i, text.len) {
+        char c = text.data[i];
+        int advance = glyphs[c].advance;
+        if (advance > width) {
+            printf("character '%c' is wider than text box (width = %d)\n", c, width);
+            exit(1);
+        }
+        if (c == '\n' || cursor + advance > width) {
+            cursor = 0;
+            line += 1;
+            info->lines[line].data = text.data + i;
+            info->lines[line].len = 0;
+            // don't wrap whitespace, just skip it
+            // @Polish handle " \n" and "\n " and "  " properly
+            if (c == '\n' || c == ' ') {
+                info->lines[line].data += 1;
+                continue;
+            }
+        }
+        info->lines[line].len += 1;
+        cursor += advance;
+        if (cursor > max_cursor) {
+            max_cursor = cursor;
+        }
+    }
+
+    if (info->lines[line].len == 0) {
+        line -= 1;
+    }
+
+    info->width = max_cursor;
+    info->rows = line + 1;
+    info->height = font_texture_height * info->rows;
+}
+
+void text_box(
+    struct Vertex* vertex_data, size_t *vertex_count,
+    VkImageCopy *sprite_regions, size_t *sprite_count,
+    str text,
+    int max_width,
+    int x, int y,
+    int frame_thickness,
+    int screen_width, int screen_height
+) {
+    static struct TextBoxInfo info;
+    text_box_info(text, max_width, &info);
+
+    range (i, info.rows) {
+        text_line(
+            sprite_regions, sprite_count,
+            info.lines[i].len, info.lines[i].data,
+            x, y + (i + 1) * font_texture_height
+        );
+    }
+    /* doesn't seem to work? need to think more about screen coords vs Vulkan
+       coords... or switch to software rendering ;) */
+    /*
+    rect(
+        vertex_data, vertex_count,
+        (float)(x - frame_thickness) / screen_width,
+        1.0f - (float)(y + info.height + frame_thickness) / screen_height,
+        (float)(x + info.width + frame_thickness) / screen_width,
+        1.0f - (float)(y - frame_thickness) / screen_height,
+        0, 0, 0
+    );
+    */
+}
+
 void build_frame_data(
     size_t *vertex_count,
     struct Vertex* vertex_data,
     size_t *sprite_count,
-    VkImageCopy *sprite_regions
+    VkImageCopy *sprite_regions,
+    int screen_width, int screen_height
 ) {
     size_t total = 0;
     range (i, fixture_count) {
@@ -209,9 +303,20 @@ void build_frame_data(
     }
     */
 
-    char *str = "Hello world!";
     *sprite_count = 0;
-    text(sprite_regions, sprite_count, strlen(str), str, 0, 60);
+
+    str text;
+    text.data = "Hello world!\nRaspberry Sorbet and Chocolate Fudge Brownies\n";
+    text.len = strlen(text.data);
+    text_box(
+        vertex_data, vertex_count,
+        sprite_regions, sprite_count,
+        text,
+        screen_width - 20,
+        10, 10,
+        5,
+        screen_width, screen_height
+    );
 
     *vertex_count = total;
 }
