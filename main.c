@@ -232,7 +232,9 @@ void text_box(
         y + info.height + frame_thickness,
         x + info.width + frame_thickness,
         y - frame_thickness,
-        0, 0, 0,
+        (float)font_texture_bg.r/255,
+        (float)font_texture_bg.g/255,
+        (float)font_texture_bg.b/255,
         screen_width, screen_height
     );
 }
@@ -364,7 +366,9 @@ int main() {
     parse_data();
     printf("Total of %lu item types\n", item_type_count);
 
-    init_text();
+    col font_fg = {.r = 20,.g = 20, .b = 255, .a = 255};
+    col font_bg = {.r = 20, .g = 20, .b = 20, .a = 255};
+    init_text(font_fg, font_bg);
 
     struct GraphicsInstance gi = createGraphicsInstance();
     struct Graphics g = createGraphics(
@@ -372,7 +376,7 @@ int main() {
         font_texture_width,
         font_texture_height,
         GLYPH_COUNT,
-        font_texture
+        (u8*)font_texture
     );
 
     bool recreateGraphics = false;
@@ -407,7 +411,7 @@ int main() {
                 font_texture_width,
                 font_texture_height,
                 GLYPH_COUNT,
-                font_texture
+                (u8*)font_texture
             );
             recreateGraphics = false;
         }

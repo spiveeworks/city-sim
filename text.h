@@ -8,8 +8,18 @@ typedef unsigned char u8;
 FT_Library  library;
 FT_Face     face;
 
-#define FONT_TEXTURE_CAP 10000000
-u8 font_texture[FONT_TEXTURE_CAP];
+typedef struct {
+    u8 b;
+    u8 g;
+    u8 r;
+    u8 a;
+} col;
+
+col font_texture_fg;
+col font_texture_bg;
+
+#define FONT_TEXTURE_CAP 2500000
+col font_texture[FONT_TEXTURE_CAP];
 int font_texture_width;
 int font_texture_height;
 
@@ -24,7 +34,10 @@ struct Glyph {
 struct Glyph glyphs[GLYPH_COUNT];
 typedef struct Glyph *Glyph;
 
-void init_text() {
+void init_text(col fg, col bg) {
+    font_texture_fg = fg;
+    font_texture_bg = bg;
+
     FT_Error error = FT_Init_FreeType(&library);
     if (error) {
         fprintf(stderr, "ERROR: failed to initialise FreeType library\n");
@@ -85,7 +98,7 @@ void init_text() {
         exit(1);
     }
 
-    int glyph_size = font_texture_width * font_texture_height * 4;
+    int glyph_col_count = font_texture_width * font_texture_height;
 
     for (int i = 0; i < GLYPH_COUNT; i++) {
         /* load glyph image into the slot (erase previous one) */
@@ -105,18 +118,20 @@ void init_text() {
             exit(1);
         }
 
-        u8 *out_row = &font_texture[glyph_size * i];
-        memset(out_row, 0, glyph_size);
+        col *out_row = &font_texture[glyph_col_count * i];
+        memset(out_row, 0, glyph_col_count * sizeof(col));
         u8 *in_row = face->glyph->bitmap.buffer;
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                out_row[4*x + 0] = in_row[x];
-                out_row[4*x + 1] = in_row[x];
-                out_row[4*x + 2] = in_row[x];
-                out_row[4*x + 3] = 255;
+                int a = in_row[x];
+                int b = 255 - a;
+                out_row[x].r = (a * fg.r + b * bg.r) / 255;
+                out_row[x].g = (a * fg.g + b * bg.g) / 255;
+                out_row[x].b = (a * fg.b + b * bg.b) / 255;
+                out_row[x].a = (a * fg.a + b * bg.a) / 255;
             }
             in_row += width;
-            out_row += font_texture_width * 4;
+            out_row += font_texture_width;
         }
     }
 }
