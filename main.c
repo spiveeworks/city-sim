@@ -72,6 +72,19 @@ void rect(struct Vertex* vertex_data, size_t *total,
     vertex_data[(*total)++] = vs[0][1];
 }
 
+void rect_screen(struct Vertex* vertex_data, size_t *total,
+    int xl, int yb, int xr, int yt, float r, float g, float b,
+    int screen_width, int screen_height)
+{
+    float cx = 2.0F / screen_width;
+    float cy = 2.0F / screen_height;
+    rect(
+        vertex_data, total,
+        cx * xl - 1.0F, cy * yb - 1.0F, cx * xr - 1.0F, cy * yt - 1.0F,
+        r, g, b
+    );
+}
+
 void line_by_num(
     struct Vertex* vertex_data, size_t *total,
     num x0_num, num y0_num, num x1_num, num y1_num,
@@ -213,18 +226,15 @@ void text_box(
             x, y + (i + 1) * font_texture_height
         );
     }
-    /* doesn't seem to work? need to think more about screen coords vs Vulkan
-       coords... or switch to software rendering ;) */
-    /*
-    rect(
+    rect_screen(
         vertex_data, vertex_count,
-        (float)(x - frame_thickness) / screen_width,
-        1.0f - (float)(y + info.height + frame_thickness) / screen_height,
-        (float)(x + info.width + frame_thickness) / screen_width,
-        1.0f - (float)(y - frame_thickness) / screen_height,
-        0, 0, 0
+        x - frame_thickness,
+        y + info.height + frame_thickness,
+        x + info.width + frame_thickness,
+        y - frame_thickness,
+        0, 0, 0,
+        screen_width, screen_height
     );
-    */
 }
 
 void build_frame_data(
@@ -309,7 +319,7 @@ void build_frame_data(
     text.data = "Hello world!\nRaspberry Sorbet and Chocolate Fudge Brownies\n";
     text.len = strlen(text.data);
     text_box(
-        vertex_data, vertex_count,
+        vertex_data, &total,
         sprite_regions, sprite_count,
         text,
         screen_width - 20,
