@@ -22,6 +22,8 @@ col font_texture_bg;
 col font_texture[FONT_TEXTURE_CAP];
 int font_texture_width;
 int font_texture_height;
+int font_texture_range;
+int font_texture_offset;
 
 #define GLYPH_COUNT 256
 struct Glyph {
@@ -72,6 +74,8 @@ void init_text(col fg, col bg) {
 
     font_texture_width = 0;
     font_texture_height = 0;
+    font_texture_range = 0;
+    int max_overhang = 0;
     for (int i = 0; i < GLYPH_COUNT; i++) {
         error = FT_Load_Char(face, i, 0);
         if (error)
@@ -90,7 +94,14 @@ void init_text(col fg, col bg) {
         if (glyphs[i].height > font_texture_height) {
             font_texture_height = glyphs[i].height;
         }
+        if (glyphs[i].height - glyphs[i].bearingy > max_overhang) {
+            max_overhang = glyphs[i].height - glyphs[i].bearingy;
+        }
+        if (glyphs[i].bearingy > font_texture_offset) {
+            font_texture_offset = glyphs[i].bearingy;
+        }
     }
+    font_texture_range = font_texture_offset + max_overhang;
 
     /* could really malloc */
     if (font_texture_width * font_texture_height * GLYPH_COUNT > FONT_TEXTURE_CAP) {

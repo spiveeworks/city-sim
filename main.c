@@ -123,7 +123,7 @@ void line_by_num(
 
 void text_line(
     VkImageCopy *sprite_regions, size_t *total,
-    size_t str_len, char *data,
+    size_t str_len, u8 *data,
     int x0, int y0
 ) {
     VkImageSubresourceLayers subresource = {};
@@ -134,7 +134,7 @@ void text_line(
 
     int x = x0;
     range (i, str_len) {
-        char c = data[i];
+        u8 c = data[i];
         sprite_regions[*total].srcSubresource = subresource;
         sprite_regions[*total].dstSubresource = subresource;
         sprite_regions[*total].srcOffset = (VkOffset3D){0, 0, c};
@@ -150,7 +150,7 @@ void text_line(
 #define TEXT_BOX_CAP 128
 
 typedef struct str {
-    char *data;
+    u8 *data;
     size_t len;
 } str;
 
@@ -173,7 +173,7 @@ void text_box_info(
     int cursor = 0;
     int max_cursor = 0;
     range (i, text.len) {
-        char c = text.data[i];
+        u8 c = text.data[i];
         int advance = glyphs[c].advance;
         if (advance > width) {
             printf("character '%c' is wider than text box (width = %d)\n", c, width);
@@ -204,7 +204,7 @@ void text_box_info(
 
     info->width = max_cursor;
     info->rows = line + 1;
-    info->height = font_texture_height * info->rows;
+    info->height = font_texture_range * info->rows;
 }
 
 void text_box(
@@ -223,15 +223,15 @@ void text_box(
         text_line(
             sprite_regions, sprite_count,
             info.lines[i].len, info.lines[i].data,
-            x, y + (i + 1) * font_texture_height
+            x, y + i * font_texture_range + font_texture_offset
         );
     }
     rect_screen(
         vertex_data, vertex_count,
         x - frame_thickness,
-        y + info.height + frame_thickness,
-        x + info.width + frame_thickness,
         y - frame_thickness,
+        x + info.width + frame_thickness,
+        y + info.height + frame_thickness,
         (float)font_texture_bg.r/255,
         (float)font_texture_bg.g/255,
         (float)font_texture_bg.b/255,
@@ -318,7 +318,7 @@ void build_frame_data(
     *sprite_count = 0;
 
     str text;
-    text.data = "Hello world!\nRaspberry Sorbet and Chocolate Fudge Brownies\n";
+    text.data = "Hello world!\nRaspberry Sorbet and Chocolate Fudge Brownies\npgqJj__\nÀ@@@Jj";
     text.len = strlen(text.data);
     text_box(
         vertex_data, &total,
