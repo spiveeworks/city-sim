@@ -318,7 +318,7 @@ void build_frame_data(
     *sprite_count = 0;
 
     str text;
-    text.data = "Hello world!\nRaspberry Sorbet and Chocolate Fudge Brownies\npgqJj__\nÀ@@@Jj";
+    text.data = "Hello world!\nRaspberry Sorbet and Chocolate Fudge Brownies\npgqJj__\n\xC0@@@Jj";
     text.len = strlen(text.data);
     text_box(
         vertex_data, &total,
