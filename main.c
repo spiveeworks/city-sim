@@ -10,6 +10,11 @@
 
 time_t start_time;
 
+int mouse_x_screen;
+int mouse_y_screen;
+num mouse_x;
+num mouse_y;
+
 size_t selected_char = ~0;
 
 void bright(float c, float *col) {
@@ -219,6 +224,15 @@ void text_box(
     static struct TextBoxInfo info;
     text_box_info(text, max_width, &info);
 
+    y -= info.height;
+    x += frame_thickness;
+    y -= frame_thickness;
+
+    if (x < 0) x = 0;
+    if (y - frame_thickness < 0) y = frame_thickness;
+    if (x + info.width  > screen_width ) x = screen_width  - info.width;
+    if (y + info.height > screen_height) y = screen_height - info.height;
+
     range (i, info.rows) {
         text_line(
             sprite_regions, sprite_count,
@@ -324,11 +338,14 @@ void build_frame_data(
         vertex_data, &total,
         sprite_regions, sprite_count,
         text,
-        screen_width - 20,
-        10, 10,
+        150,
+        mouse_x_screen, mouse_y_screen,
         5,
         screen_width, screen_height
     );
+
+    float x = (float)mouse_x/DIM;
+    float y = (float)mouse_y/DIM;
 
     *vertex_count = total;
 }
@@ -343,14 +360,8 @@ const num MOUSE_RANGE = DIM_CTIME / 32;
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
     double glfw_x;
     double glfw_y;
-    glfwGetCursorPos(window, &glfw_x, &glfw_y);
-    int width;
-    int height;
-    glfwGetFramebufferSize(window, &width, &height);
-    num x = 2 * DIM * (num)glfw_x / width - DIM;
-    num y = 2 * DIM * (num)glfw_y / height - DIM;
     if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_LEFT) {
-        ref nearest = find_nearest(x, y, MOUSE_RANGE, is_char);
+        ref nearest = find_nearest(mouse_x, mouse_y, MOUSE_RANGE, is_char);
         if (nearest != -1) {
             selected_char = nearest & REF_IND;
         } else {
@@ -358,6 +369,16 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
         }
     } else if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_RIGHT) {
     }
+}
+
+void mouse_move_callback(GLFWwindow* window, double x, double y) {
+    mouse_x_screen = x;
+    mouse_y_screen = y;
+    int width;
+    int height;
+    glfwGetFramebufferSize(window, &width, &height);
+    mouse_x = 2 * DIM * (num)mouse_x_screen / width - DIM;
+    mouse_y = 2 * DIM * (num)mouse_y_screen / height - DIM;
 }
 
 int main() {
@@ -383,6 +404,7 @@ int main() {
     glfwSetWindowUserPointer(gi.window, &recreateGraphics);
     glfwSetFramebufferSizeCallback(gi.window, recordResize);
     glfwSetMouseButtonCallback(gi.window, mouse_button_callback);
+    glfwSetCursorPosCallback(gi.window, mouse_move_callback);
 
     init();
 
