@@ -60,13 +60,7 @@ void init_text(col fg, col bg) {
         exit(1);
     }
 
-    error = FT_Set_Char_Size(
-        face,    /* handle to face object           */
-        0,       /* char_width in 1/64th of points  */
-        16*64,   /* char_height in 1/64th of points */
-        300,     /* horizontal device resolution    */
-        300      /* vertical device resolution      */
-    );
+    error = FT_Set_Pixel_Sizes(face, 0, 16);
     if (error) {
         fprintf(stderr, "ERROR: failed to set char size\n");
         exit(1);
