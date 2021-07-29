@@ -519,6 +519,29 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
         createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
         createInfo.surface = gi->surface;
 
+        // presentation stuff
+        createInfo.preTransform = capabilities.currentTransform;
+        createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        createInfo.clipped = VK_TRUE;
+        createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+        {
+            uint32_t presentModesCount;
+            vkGetPhysicalDeviceSurfacePresentModesKHR(gi->dev_p, gi->surface,
+                    &presentModesCount, NULL);
+            VkPresentModeKHR presentModes[presentModesCount];
+            vkGetPhysicalDeviceSurfacePresentModesKHR(gi->dev_p, gi->surface,
+                    &presentModesCount, presentModes);
+
+            range (i, presentModesCount) {
+                if (presentModes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+                    createInfo.presentMode = presentModes[i];
+                } else if (presentModes[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
+                    createInfo.presentMode = presentModes[i];
+                    break;
+                }
+            }
+        }
+
         // image stuff
         {
             uint32_t formatCount;
@@ -563,11 +586,14 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
             }
         }
         g.swapchainExtent = createInfo.imageExtent;
-        if (capabilities.minImageCount == capabilities.maxImageCount) {
-            createInfo.minImageCount = capabilities.maxImageCount;
+        if (createInfo.presentMode == VK_PRESENT_MODE_FIFO_KHR) {
+            createInfo.minImageCount = capabilities.minImageCount;
+        } else if (capabilities.minImageCount == capabilities.maxImageCount) {
+            createInfo.minImageCount = capabilities.minImageCount;
         } else {
             createInfo.minImageCount = capabilities.minImageCount + 1;
         }
+
         createInfo.imageArrayLayers = 1;
         createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
             | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -593,26 +619,6 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
                 createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
                 createInfo.queueFamilyIndexCount = 2;
                 createInfo.pQueueFamilyIndices = gi->qfi;
-            }
-        }
-
-        // presentation stuff
-        createInfo.preTransform = capabilities.currentTransform;
-        createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-        createInfo.clipped = VK_TRUE;
-        createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
-        {
-            uint32_t presentModesCount;
-            vkGetPhysicalDeviceSurfacePresentModesKHR(gi->dev_p, gi->surface,
-                    &presentModesCount, NULL);
-            VkPresentModeKHR presentModes[presentModesCount];
-            vkGetPhysicalDeviceSurfacePresentModesKHR(gi->dev_p, gi->surface,
-                    &presentModesCount, presentModes);
-
-            range (i, presentModesCount) {
-                if (presentModes[i] == VK_PRESENT_MODE_FIFO_KHR) {
-                    createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
-                }
             }
         }
 
