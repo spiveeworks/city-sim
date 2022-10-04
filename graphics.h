@@ -1,9 +1,14 @@
-#pragma once
+#ifndef SPIVEE_INCLUDE_GRAPHICS_H
+#define SPIVEE_INCLUDE_GRAPHICS_H
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
-
-#include "util.h"
 
 #define QF_GRAPHICS 0
 #define QF_PRESENTATION 1
@@ -313,9 +318,9 @@ struct GraphicsInstance createGraphicsInstance() {
 
         vkEnumerateInstanceLayerProperties(&layerCount, layers);
 
-        range (i, VALIDATION_LAYERS_LEN) {
+        for (size_t i = 0; i < VALIDATION_LAYERS_LEN; i++) {
             bool layerFound = false;
-            range (j, layerCount) {
+            for (size_t j = 0; j < layerCount; j++) {
                 if (strcmp(validationLayers[i], layers[j].layerName) == 0) {
                     layerFound = true;
                     break;
@@ -360,7 +365,7 @@ struct GraphicsInstance createGraphicsInstance() {
 
         g.dev_p = VK_NULL_HANDLE;
 
-        range (i, deviceCount) {
+        for (size_t i = 0; i < deviceCount; i++) {
             g.dev_p = devices[i];
             // check queue families
             uint32_t qf_count = 0;
@@ -372,7 +377,7 @@ struct GraphicsInstance createGraphicsInstance() {
                 printf("queuefamily selection currently assumes qfi_len < 8");
             }
             uint8_t flags = 0;
-            range (j, qf_count) {
+            for (size_t j = 0; j < qf_count; j++) {
                 if (qfs[j].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
                     flags |= 1 << QF_GRAPHICS;
                     g.qfi[QF_GRAPHICS] = j;
@@ -401,9 +406,9 @@ struct GraphicsInstance createGraphicsInstance() {
                     &extensionCount, availableExtensions);
 
             bool allExts = true;
-            range (i, REQUIRED_EXT_COUNT) {
+            for (size_t i = 0; i < REQUIRED_EXT_COUNT; i++) {
                 bool thisExt = false;
-                range (j, extensionCount) {
+                for (size_t j = 0; j < extensionCount; j++) {
                     if (strcmp(required_exts[i], availableExtensions[j].extensionName) == 0) {
                         thisExt = true;
                         break;
@@ -443,9 +448,9 @@ struct GraphicsInstance createGraphicsInstance() {
         float queuePriority = 1.0f;
         VkDeviceQueueCreateInfo queueCreateInfo[QF_LEN] = {};
         size_t unique = 0;
-        range (i, QF_LEN) {
+        for (size_t i = 0; i < QF_LEN; i++) {
             bool is_unique = true;
-            range (j, i) {
+            for (size_t j = 0; j < i; j++) {
                 if (g.qfi[j] == g.qfi[i]) {
                     is_unique = false;
                     break;
@@ -532,7 +537,7 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
             vkGetPhysicalDeviceSurfacePresentModesKHR(gi->dev_p, gi->surface,
                     &presentModesCount, presentModes);
 
-            range (i, presentModesCount) {
+            for (size_t i = 0; i < presentModesCount; i++) {
                 if (presentModes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) {
                     createInfo.presentMode = presentModes[i];
                 } else if (presentModes[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
@@ -549,7 +554,7 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
             VkSurfaceFormatKHR formats[formatCount];
             vkGetPhysicalDeviceSurfaceFormatsKHR(gi->dev_p, gi->surface, &formatCount, formats);
             size_t format = 0;
-            range (i, formatCount) {
+            for (size_t i = 0; i < formatCount; i++) {
                 if (
                     formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR
                     && formats[i].format == VK_FORMAT_B8G8R8A8_UNORM
@@ -602,7 +607,7 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
         {
             bool unique = true;
             uint32_t x = gi->qfi[0];
-            range(i, QF_LEN) {
+            for(size_t i = 0; i < QF_LEN; i++) {
                 if (gi->qfi[i] != x) {
                     unique = false;
                     break;
@@ -965,7 +970,7 @@ struct Graphics createGraphics(struct GraphicsInstance *gi, int texWidth, int te
     }
 
     // create views, framebuffers, vertexbuffer, commandbuffers
-    range (i, g.swapchainImageCount) {
+    for (size_t i = 0; i < g.swapchainImageCount; i++) {
         // image view
         VkImageViewCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -1202,7 +1207,7 @@ void destroyGraphics(struct GraphicsInstance *gi, struct Graphics *g) {
     vkDestroyImage(gi->dev, g->textureImage, NULL);
     vkFreeMemory(gi->dev, g->textureMemory, NULL);
 
-    range (i, g->swapchainImageCount) {
+    for (size_t i = 0; i < g->swapchainImageCount; i++) {
         vkDestroyFramebuffer(gi->dev, g->swapchainFramebuffers[i], NULL);
         vkDestroyImageView(gi->dev, g->swapchainImageViews[i], NULL);
     }
@@ -1233,3 +1238,4 @@ void destroyGraphicsInstance(struct GraphicsInstance *gi) {
     glfwTerminate();
 }
 
+#endif

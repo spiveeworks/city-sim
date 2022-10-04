@@ -1,7 +1,8 @@
+#include "graphics.h"
+
 #define FRAMERATE 60
 
 #include "text.h"
-#include "graphics.h"
 
 #include "data.h"
 #include "sim.h"
