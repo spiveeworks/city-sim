@@ -140,15 +140,20 @@ void text_line(
     int x = x0;
     range (i, str_len) {
         u8 c = data[i];
+
+        int width = glyphs[c].width;
+        int height = glyphs[c].height;
+        int gx = x;
+        x += glyphs[c].advance;
+        if (width == 0 || height == 0) continue;
+
         sprite_regions[*total].srcSubresource = subresource;
         sprite_regions[*total].dstSubresource = subresource;
         sprite_regions[*total].srcOffset = (VkOffset3D){0, 0, c};
         sprite_regions[*total].dstOffset =
-            (VkOffset3D){x + glyphs[c].bearingx, y0 - glyphs[c].bearingy, 0};
-        sprite_regions[*total].extent =
-            (VkExtent3D){glyphs[c].width, glyphs[c].height, 1};
+            (VkOffset3D){gx + glyphs[c].bearingx, y0 - glyphs[c].bearingy, 0};
+        sprite_regions[*total].extent = (VkExtent3D){width, height, 1};
         (*total)++;
-        x += glyphs[c].advance;
     }
 }
 

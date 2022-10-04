@@ -48,7 +48,7 @@ void init_text(col fg, col bg) {
 
     error = FT_New_Face(
         library,
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "DejaVuSans.ttf",
          0,
          &face
     );
